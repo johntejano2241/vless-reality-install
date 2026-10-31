@@ -9,9 +9,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Syntax and lifecycle tests
         run: |
-          bash -n install.sh upgrade.sh install-expiry.sh tests/smoke_upgrade.sh
+          bash -n install.sh upgrade.sh install-expiry.sh install-ip-limits.sh tests/smoke_upgrade.sh
           python3 -m unittest discover -s tests -v
-          shellcheck install.sh upgrade.sh install-expiry.sh tests/smoke_upgrade.sh
+          shellcheck install.sh upgrade.sh install-expiry.sh install-ip-limits.sh tests/smoke_upgrade.sh
       - name: Download verified Xray release
         run: |
           set -euo pipefail
@@ -29,6 +29,9 @@ jobs:
         run: /usr/bin/python3 tests/validate_xray.py "$PWD/xray"
       - name: Smoke test existing-server upgrade on Ubuntu 22.04
         run: sudo env GITHUB_ACTIONS=true bash tests/smoke_upgrade.sh "$PWD/xray"
+      - name: Test public-IP slots with real REALITY clients
+        run: sudo env GITHUB_ACTIONS=true /usr/bin/python3 tests/smoke_ip_limits.py
       - name: Show service diagnostics on failure
         if: failure()
-        run: sudo journalctl -u reality-vless -u reality-vless-expire --no-pager -n 80
+        run: sudo journalctl -u reality-vless -u reality-vless-expire -u reality-vless-limits --no-pager -n 80
+

@@ -7,7 +7,7 @@ source /etc/os-release
 [[ $ID == ubuntu && $VERSION_ID == 22.04 ]] || { echo 'Requires Ubuntu 22.04.' >&2; exit 1; }
 [[ -d /run/systemd/system ]] || { echo 'Requires systemd.' >&2; exit 1; }
 base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-for source_file in realityctl.py install-expiry.sh systemd/reality-vless-expire.service systemd/reality-vless-expire.timer; do
+for source_file in realityctl.py ip_limiter.py install-ip-limits.sh install-expiry.sh systemd/ip-control.conf systemd/reality-vless-limits.service systemd/reality-vless-expire.service systemd/reality-vless-expire.timer; do
   [[ -f "$base/$source_file" ]] || { echo 'Extract the complete project first.' >&2; exit 1; }
 done
 exec 9>>/run/lock/reality-installer.lock
@@ -53,6 +53,7 @@ printf '%s  %s\n' "${digest#sha256:}" "$tmp/xray.zip" | sha256sum -c -
 unzip -p "$tmp/xray.zip" xray > "$tmp/xray"
 chmod 700 "$tmp/xray"
 "$tmp/xray" version
+/usr/bin/python3 "$base/realityctl.py" check-core "$tmp/xray"
 # No service or persistent configuration has been changed before verification.
 getent passwd reality-vless >/dev/null || useradd --system --user-group --no-create-home --shell /usr/sbin/nologin reality-vless
 install -d -m 750 -o root -g reality-vless /etc/reality-vless
@@ -92,8 +93,10 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now reality-vless
 systemctl is-active --quiet reality-vless
+bash "$base/install-ip-limits.sh"
 bash "$base/install-expiry.sh"
 printf '\nInstalled. No clients exist yet. Open the menu: sudo realityctl\n'
 printf 'Allow inbound TCP %s in your host AND provider firewalls. Existing firewall/SSH rules were preserved.\n' "$port"
 printf 'Release: %s\n' "$(jq -r .tag_name "$tmp/release.json")"
+
 

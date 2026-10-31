@@ -247,7 +247,7 @@ class DiskLifecycleTests(unittest.TestCase):
         self.assertEqual(self.registry()['clients'], [])
 
     def test_menu_add_find_list_remove_and_duplicate_error(self):
-        inputs = ['1', 'andrea', '0', '1', 'ANDREA', '1', '3', 'andrea', '4', '5', 'andrea', 'y', '0']
+        inputs = ['1', 'andrea', '0', '0', '1', 'ANDREA', '1', '0', '3', 'andrea', '4', '5', 'andrea', 'y', '0']
         with patch('builtins.input', side_effect=inputs):
             m.main([])
         self.assertIn('already exists', self.errors.getvalue())
@@ -287,3 +287,4 @@ class DiskLifecycleTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

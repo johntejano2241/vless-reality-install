@@ -28,6 +28,10 @@ UTC = timezone.utc
 PHT = timezone(timedelta(hours=8))
 XRAY = '/usr/local/bin/xray-reality'
 SERVICE = 'reality-vless'
+IP_SERVICE = 'reality-vless-limits'
+API_SOCKET = '/run/reality-vless-api/control.sock'
+EVENT_SOCKET = '/run/reality-vless-limits/events.sock'
+IP_RULE_PREFIX = 'managed-client-ip:'
 
 
 def hostname(value):
@@ -124,6 +128,19 @@ def parse_days(value):
     return int(str(value).strip())
 
 
+
+def parse_devices(value):
+    if not re.fullmatch(r'[0-9]+', str(value).strip()):
+        raise ValueError('Device limit must be a whole number: 0 = no limit, 1 or more = public-IP slots')
+    return int(str(value).strip())
+
+
+def check_core(binary):
+    result = subprocess.run([binary, 'version'], check=True, capture_output=True, text=True, timeout=10)
+    match = re.search(r'Xray (\d+)\.(\d+)\.(\d+)', result.stdout)
+    if not match or tuple(map(int, match.groups())) < (26, 10, 29):
+        raise ValueError('IP-slot management requires official Xray 26.10.29 or newer; update Xray first')
+
 def expiry_from_days(days, now):
     days = parse_days(days)
     if days == 0:
@@ -164,19 +181,27 @@ def validate_registry(registry):
             raise ValueError('Missing client expiry in clients.json')
         if record['expires_at'] is not None:
             parse_timestamp(record['expires_at'])
+        limit = record.get('device_limit', 0)
+        if type(limit) is not int or limit < 0:
+            raise ValueError('Invalid non-negative device_limit in clients.json')
     return registry
 
 
 def registry_from_config(config):
     # Legacy accounts have no expiry; preserve every existing UUID and user option.
     return validate_registry({'version': 1, 'clients': [
-        {'name': user['email'], 'user': copy.deepcopy(user), 'expires_at': None}
+        {'name': user['email'], 'user': copy.deepcopy(user), 'expires_at': None, 'device_limit': 0}
         for user in users(config)]})
 
 
 def load_registry(config):
     if REGISTRY.exists():
-        return validate_registry(json.loads(REGISTRY.read_text()))
+        registry = validate_registry(json.loads(REGISTRY.read_text()))
+        if any('device_limit' not in c for c in registry['clients']):
+            for record in registry['clients']:
+                record.setdefault('device_limit', 0)
+            atomic_json(REGISTRY, registry)
+        return registry
     registry = registry_from_config(config)
     atomic_json(REGISTRY, registry)
     return registry
@@ -193,7 +218,7 @@ def find_client(registry, name):
     return matches[0]
 
 
-def edit_clients(registry, action, name, days, now):
+def edit_clients(registry, action, name, days, now, devices=0):
     client_name(name)
     updated = copy.deepcopy(registry)
     if action == 'add':
@@ -201,7 +226,7 @@ def edit_clients(registry, action, name, days, now):
             raise ValueError(f"Client '{name}' already exists; renew it if expired")
         updated['clients'].append({'name': name,
             'user': {'id': str(uuid.uuid4()), 'email': name, 'flow': 'xtls-rprx-vision'},
-            'expires_at': expiry_from_days(days, now)})
+            'expires_at': expiry_from_days(days, now), 'device_limit': parse_devices(devices)})
     elif action == 'renew':
         record = find_client(updated, name)
         if client_status(record, now) != 'expired':
@@ -214,13 +239,64 @@ def edit_clients(registry, action, name, days, now):
     return validate_registry(updated)
 
 
+
+def enable_ip_control(config, registry):
+    rendered = copy.deepcopy(config)
+    api = rendered.get('api')
+    if api and (api.get('tag') != 'reality-control' or api.get('listen') != API_SOCKET):
+        raise ValueError('Custom Xray API configuration conflicts with the managed private control socket')
+    rendered['api'] = {'tag': 'reality-control', 'listen': API_SOCKET,
+                       'services': ['StatsService', 'RoutingService']}
+    rendered.setdefault('stats', {})
+    levels = rendered.setdefault('policy', {}).setdefault('levels', {})
+    for level in {str(c['user'].get('level', 0)) for c in registry['clients']} | {'0'}:
+        levels.setdefault(level, {})['statsUserOnline'] = True
+    return rendered
+
+
+def ip_routing(config, registry, now, slots=None):
+    """Build per-identity rules; never ban an address across unrelated clients.
+
+    Disk configuration has no admitted IPs and denies limited users by default.
+    The controller supplies admitted slots to an atomic, in-memory API update.
+    """
+    slots = slots or {}
+    routing = copy.deepcopy(config.get('routing', {}))
+    if routing.get('script'):
+        raise ValueError('Managed IP limits cannot be combined with a custom routing script')
+    base = [r for r in routing.get('rules', []) if not r.get('ruleTag', '').startswith(IP_RULE_PREFIX)]
+    # Preserve destination security blocks ahead of any per-client direct allow.
+    blocks = [r for r in base if r.get('outboundTag') == 'blocked']
+    remaining = [r for r in base if r.get('outboundTag') != 'blocked']
+    guards = []
+    for record in registry['clients']:
+        limit = record.get('device_limit', 0)
+        if not limit or client_status(record, now) != 'active':
+            continue
+        identity = record['user']['id']
+        allowed = sorted(slots.get(identity, {}))
+        if len(allowed) > limit:
+            raise ValueError('Admitted IP count exceeds the configured client limit')
+        if allowed:
+            guards.append({'type': 'field', 'inboundTag': ['reality'], 'user': [record['name']],
+                'sourceIP': [str(ipaddress.ip_address(ip)) for ip in allowed],
+                'outboundTag': 'direct', 'ruleTag': IP_RULE_PREFIX + identity + ':allow'})
+        guards.append({'type': 'field', 'inboundTag': ['reality'], 'user': [record['name']],
+            'outboundTag': 'blocked', 'ruleTag': IP_RULE_PREFIX + identity + ':deny',
+            'webhook': {'url': EVENT_SOCKET, 'deduplication': 0}})
+    routing['rules'] = blocks + guards + remaining
+    return routing
+
+
 def render_config(config, registry, now):
     validate_registry(registry)
     rendered = copy.deepcopy(config)
     rendered['inbounds'][0]['settings']['clients'] = [
         copy.deepcopy(c['user']) for c in registry['clients'] if client_status(c, now) == 'active']
+    if any(c.get('device_limit', 0) for c in registry['clients']) or rendered.get('api', {}).get('tag') == 'reality-control':
+        rendered = enable_ip_control(rendered, registry)
+        rendered['routing'] = ip_routing(rendered, registry, now)
     return rendered
-
 
 def share_link(config, meta, record):
     inbound = config['inbounds'][0]
@@ -299,18 +375,19 @@ def locked():
 
 def print_table(records, now):
     print('Expiration dates: Philippine time (UTC+08:00)')
-    rows = [(c['name'], client_status(c, now), display_expiry(c)) for c in records]
+    rows = [(c['name'], client_status(c, now), display_expiry(c),
+             str(c.get('device_limit', 0)) if c.get('device_limit', 0) else 'Unlimited') for c in records]
     widths = [max([len(row[i]) for row in rows] + [len(title)])
-              for i, title in enumerate(['Name', 'Status', 'Expiration date'])]
+              for i, title in enumerate(['Name', 'Status', 'Expiration date', 'IP slots'])]
     fmt = '  '.join('{:<%d}' % width for width in widths)
-    print(fmt.format('Name', 'Status', 'Expiration date'))
+    print(fmt.format('Name', 'Status', 'Expiration date', 'IP slots'))
     for row in rows:
         print(fmt.format(*row))
     if not rows:
         print('(no clients)')
 
 
-def execute(command, name=None, days=None):
+def execute(command, name=None, days=None, devices=0):
     with locked():
         config = json.loads(CONFIG.read_text())
         registry = load_registry(config)
@@ -318,8 +395,17 @@ def execute(command, name=None, days=None):
         if command == 'migrate':
             print(f"Client records ready: {len(registry['clients'])}. Existing identities preserved.")
             return
+        if command == 'configure-limits':
+            config = enable_ip_control(config, registry)
+        if command == 'add' and parse_devices(devices):
+            if config.get('api', {}).get('tag') != 'reality-control':
+                raise ValueError('Run upgrade.sh to enable the IP-limit service before adding a limited client')
+            try:
+                subprocess.run(['systemctl', 'is-active', '--quiet', IP_SERVICE], check=True, timeout=10)
+            except (OSError, subprocess.SubprocessError) as exc:
+                raise ValueError('IP-limit service is unavailable; run upgrade.sh or start reality-vless-limits') from exc
         if command in ['add', 'renew', 'remove']:
-            registry = edit_clients(registry, command, name, days, now)
+            registry = edit_clients(registry, command, name, days, now, devices)
         # Reads and the timer also enforce due expirations; expired records stay in clients.json.
         active_config = render_config(config, registry, now)
         restarted = commit(active_config, registry)
@@ -345,6 +431,10 @@ def prompt_days():
     return parse_days(input('Expiration days (0 = no expiry, 1 or more = days): ').strip())
 
 
+def prompt_devices():
+    return parse_devices(input('Multiple devices / public-IP slots (0 = no limit, 1 or more = limit): ').strip())
+
+
 def menu():
     # Never hold the management lock while waiting for input: the timer must keep running.
     options = {'1': 'add', '2': 'renew', '3': 'find', '4': 'list', '5': 'remove'}
@@ -363,10 +453,11 @@ def menu():
             if name is not None:
                 client_name(name)
             days = prompt_days() if command in ['add', 'renew'] else None
+            devices = prompt_devices() if command == 'add' else 0
             if command == 'remove' and input(f"Permanently remove '{name}'? [y/N]: ").strip().lower() != 'y':
                 print('Removal cancelled.')
                 continue
-            execute(command, name, days)
+            execute(command, name, days, devices)
         except (ValueError, OSError, RuntimeError, subprocess.SubprocessError) as error:
             print(f'Error: {error}', file=sys.stderr)
         except (EOFError, KeyboardInterrupt):
@@ -381,10 +472,12 @@ def main(argv=None):
         child = sub.add_parser(action)
         child.add_argument('name')
         child.add_argument('--days', help='0 = no expiry, 1 or more = days; prompted if omitted')
+        if action == 'add':
+            child.add_argument('--devices', help='0 = unlimited, 1 or more = simultaneous public-IP slots')
     sub.add_parser('remove', aliases=['revoke']).add_argument('name')
     sub.add_parser('find', aliases=['show']).add_argument('name')
     sub.add_parser('list', aliases=['all'])
-    for action in ['menu', 'status', 'expire', 'migrate']:
+    for action in ['menu', 'status', 'expire', 'migrate', 'configure-limits']:
         sub.add_parser(action)
     for action in ['init', 'check-input']:
         child = sub.add_parser(action)
@@ -392,7 +485,11 @@ def main(argv=None):
         child.add_argument('sni')
         if action == 'init':
             child.add_argument('port', type=int)
+    sub.add_parser('check-core').add_argument('binary')
     args = parser.parse_args(argv)
+    if args.command == 'check-core':
+        check_core(args.binary)
+        return
     if args.command == 'check-input':
         endpoint(args.endpoint)
         hostname(args.sni)
@@ -432,7 +529,13 @@ def main(argv=None):
             days = prompt_days()
         else:
             raise ValueError('Supply --days 0 for no expiry or --days N for a number of days')
-    execute(command, name, days)
+    devices = 0
+    if command == 'add':
+        if args.devices is not None:
+            devices = parse_devices(args.devices)
+        elif sys.stdin.isatty():
+            devices = prompt_devices()
+    execute(command, name, days, devices)
 
 
 if __name__ == '__main__':
@@ -444,3 +547,4 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print('\nExiting.', file=sys.stderr)
         sys.exit(130)
+
