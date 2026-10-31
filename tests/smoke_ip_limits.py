@@ -15,6 +15,8 @@ SOURCE1, SOURCE2 = '198.19.0.2', '198.19.0.3'
 TARGET_IP = '198.19.0.10'
 MARKER = b'IP_SLOT_TEST_OK'
 STOP = threading.Event()
+HITS = []
+LAST_CURL = None
 
 
 def command(*args, **kwargs):
@@ -40,7 +42,10 @@ class Target(BaseHTTPRequestHandler):
         pass
 
     def do_GET(self):
+        HITS.append(self.path)
         self.send_response(200)
+        if self.path != '/hold':
+            self.send_header('Content-Length', str(len(MARKER) + 1))
         self.end_headers()
         try:
             self.wfile.write(MARKER + b'\n')
@@ -60,7 +65,9 @@ def curl_args(port, path='/', maximum='5'):
 
 
 def fetch(port):
+    global LAST_CURL
     result = subprocess.run(curl_args(port), capture_output=True, timeout=8)
+    LAST_CURL = (port, result.returncode, result.stdout[:300], result.stderr[:500])
     return result.returncode == 0 and MARKER in result.stdout
 
 
@@ -78,6 +85,8 @@ def main():
                 aliases.append(address)
             httpd = ThreadingHTTPServer((TARGET_IP, 18080), Target)
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
+            direct = command('curl', '--silent', '--show-error', '--noproxy', '*', '--max-time', '3', f'http://{TARGET_IP}:18080/')
+            assert MARKER.decode() in direct.stdout, 'The local HTTP fixture is unavailable'
             command('realityctl', 'add', 'slot-limited', '--days', '0', '--devices', '1')
             command('realityctl', 'add', 'slot-unlimited', '--days', '0', '--devices', '0')
             config = json.loads(Path('/etc/reality-vless/config.json').read_text())
@@ -129,6 +138,9 @@ def main():
             print('Real REALITY clients: first-IP admission, same-IP sharing, excess-IP denial,')
             print('per-account isolation, uninterrupted streams and idle-slot reuse passed.')
         except Exception:
+            print('Target requests:', HITS, 'Last curl:', LAST_CURL, flush=True)
+            for log_path in sorted(root.glob('client-*.log')):
+                print(log_path.name, log_path.read_text(errors='replace')[-1600:], flush=True)
             # CI fixtures only: preserve useful diagnostics before cleanup restarts services.
             for args in [
                 ['journalctl', '-u', 'reality-vless-limits', '--no-pager', '-n', '80'],
