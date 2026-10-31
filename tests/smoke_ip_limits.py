@@ -18,7 +18,12 @@ STOP = threading.Event()
 
 
 def command(*args, **kwargs):
-    return subprocess.run(args, check=True, capture_output=True, text=True, **kwargs)
+    try:
+        return subprocess.run(args, check=True, capture_output=True, text=True, **kwargs)
+    except subprocess.CalledProcessError as error:
+        print('Command failed:', ' '.join(args), flush=True)
+        print(error.stderr or '', flush=True)
+        raise
 
 
 def wait_for(predicate, timeout, message):

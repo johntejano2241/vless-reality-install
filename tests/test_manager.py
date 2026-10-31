@@ -190,7 +190,7 @@ class DiskLifecycleTests(unittest.TestCase):
     def test_restart_failure_restores_both_files(self):
         m.execute('add', 'phone', 0)
         original_config, original_registry = self.config(), self.registry()
-        self.run.side_effect = [None, subprocess.CalledProcessError(1, 'restart'), None, None]
+        self.run.side_effect = [None, None, subprocess.CalledProcessError(1, 'restart'), None, None, None]
         with self.assertRaisesRegex(RuntimeError, 'previous client records'):
             m.execute('remove', 'phone')
         self.assertEqual(self.config(), original_config)
@@ -201,7 +201,7 @@ class DiskLifecycleTests(unittest.TestCase):
         m.execute('add', 'phone', 1)
         later = NOW + timedelta(days=2)
         with patch.object(m, 'utcnow', return_value=later):
-            self.run.side_effect = [None, subprocess.CalledProcessError(1, 'restart'), None, None]
+            self.run.side_effect = [None, None, subprocess.CalledProcessError(1, 'restart'), None, None, None]
             with self.assertRaises(RuntimeError):
                 m.execute('expire')
             self.assertEqual(len(self.registry()['clients']), 1)
