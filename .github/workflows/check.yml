@@ -33,5 +33,7 @@ jobs:
         run: sudo env GITHUB_ACTIONS=true /usr/bin/python3 tests/smoke_ip_limits.py
       - name: Show service diagnostics on failure
         if: failure()
-        run: sudo journalctl -u reality-vless -u reality-vless-expire -u reality-vless-limits --no-pager -n 80
+        run: |
+          sudo journalctl -u reality-vless-limits --no-pager -n 80
+          sudo journalctl -u reality-vless -u reality-vless-expire --no-pager -n 40
 

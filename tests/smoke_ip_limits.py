@@ -128,6 +128,17 @@ def main():
             assert fetch(19083), 'The unlimited account stopped working after slot replacement'
             print('Real REALITY clients: first-IP admission, same-IP sharing, excess-IP denial,')
             print('per-account isolation, uninterrupted streams and idle-slot reuse passed.')
+        except Exception:
+            # CI fixtures only: preserve useful diagnostics before cleanup restarts services.
+            for args in [
+                ['journalctl', '-u', 'reality-vless-limits', '--no-pager', '-n', '80'],
+                [XRAY, 'api', 'statsonlineiplist', '--server=unix:///run/reality-vless-api/control.sock', '-all'],
+                ['systemctl', 'show', 'reality-vless-limits', '-p', 'ActiveState', '-p', 'ExecMainStatus']]:
+                result = subprocess.run(args, capture_output=True, text=True)
+                print(result.stdout, result.stderr, flush=True)
+            state = Path('/run/reality-vless-limits/slots.json')
+            print('Runtime slot state:', state.read_text() if state.exists() else '(missing)', flush=True)
+            raise
         finally:
             STOP.set()
             for process in processes:
