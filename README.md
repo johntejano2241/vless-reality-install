@@ -4,14 +4,139 @@ Install a dedicated Xray server and manage expiry and per-client public-IP slots
 Supports Ubuntu 22.04 with systemd on x86_64 and ARM64. It can run beside OpenVPN
 using a separate service and an available TCP port.
 
-## Upgrade an existing installation
+Choose the guide for your server:
 
-On your server, inside the existing checkout:
+| Your situation | Guide | Script |
+| --- | --- | --- |
+| First time installing VLESS + REALITY on this server | [Fresh installation](#fresh-installation) | `install.sh` |
+| VLESS + REALITY is already installed using this repository | [Update an existing installation](#update-an-existing-installation) | `upgrade.sh` |
+
+Other guides: [Client menu](#client-menu) · [CLI commands](#cli-commands) · [Diagnostics](#diagnostics).
+
+## Fresh installation
+
+Use these steps for the **first installation on a server**. For a server already
+running this project, follow [Update an existing installation](#update-an-existing-installation).
+
+### 1. Prepare the server
+
+Connect to your Ubuntu 22.04 server through SSH using an account with `sudo`
+access. Install Git:
+
+```bash
+sudo apt-get update
+sudo apt-get install -y git
+```
+
+### 2. Download the project
+
+```bash
+cd ~
+git clone https://github.com/johntejano2241/vless-reality-install.git
+cd vless-reality-install
+```
+
+Review the source before executing it with root privileges.
+
+### 3. Run the installation script
+
+```bash
+sudo bash install.sh
+```
+
+Enter the three values requested by the installer:
+
+| Installer prompt | What to enter |
+| --- | --- |
+| Public server IP or DNS hostname | Your server's public IPv4 address, or a DNS-only hostname resolving to it. Disable Cloudflare's ordinary HTTP proxy for this hostname. |
+| REALITY target hostname | A reachable public TLS 1.3 hostname supporting HTTP/2. `www.microsoft.com` is an example to test; suitability depends on your server and network. |
+| Listen TCP port | Press Enter for **443**, or choose another available TCP port. |
+
+If a web server or OpenVPN already uses **TCP 443**, choose another port or a
+separate IP/server. OpenVPN on UDP/TCP 1194 can coexist.
+
+The installer checks the target certificate, TLS 1.3 and h2 negotiation, resolves
+one official Xray release, and verifies GitHub's SHA-256 asset digest before
+executing the binary. Missing digests cause installation to stop. This protects
+download integrity; it is not an independent publisher signature.
+
+### 4. Allow the selected TCP port
+
+Allow the port in both your **host firewall** and **provider firewall**. For
+example, if UFW is already active and you selected TCP 443:
+
+```bash
+sudo ufw allow 443/tcp
+```
+
+Replace `443` with your chosen port. The installer preserves existing firewall,
+SSH, and OpenVPN settings.
+
+### 5. Verify installation and add your first client
+
+```bash
+sudo systemctl is-active reality-vless reality-vless-expire.timer reality-vless-limits
+sudo realityctl
+```
+
+The service check should print `active` for each of the three units. There are
+initially zero authorized clients. In the menu, choose **1. Add client**, enter a
+unique name, then choose expiration days and the device/public-IP slot limit.
+See [Client menu](#client-menu) for the meaning of each value.
+
+Import the generated `vless://` link into a client supporting VLESS + REALITY +
+`xtls-rprx-vision`, such as Happ. Use the client's VPN mode for device-wide routing
+and verify its DNS, IPv6, application exclusions, and kill-switch settings.
+
+**Optional: pin a release for a fresh installation.** Instead of the normal
+installation command in step 3, set `XRAY_VERSION` to an official release tag.
+For example:
+
+```bash
+sudo env XRAY_VERSION=v26.10.29 bash install.sh
+```
+
+Use official Xray **26.10.29 or newer**. Re-running `install.sh` refuses existing
+managed paths; use the update guide below for an existing installation.
+
+## Update an existing installation
+
+Use these steps when **VLESS + REALITY is already installed using this project**.
+Run them on the server through SSH. This updates the client manager, expiry
+scheduling, and IP-slot controller.
+
+The installed Xray core must be **official Xray 26.10.29 or newer**. See
+[Xray core updates](#xray-core-updates) below if the version check fails.
+
+### 1. Download the latest project files
 
 ```bash
 cd ~/vless-reality-install
 git pull --ff-only
+```
+
+If your checkout is in a different directory, adjust the `cd` path. If Git
+reports local edits or a conflicting history, review them before continuing.
+Keep server credentials in `/etc/reality-vless/`, outside the repository.
+
+### 2. Apply the update
+
+```bash
 sudo bash upgrade.sh
+```
+
+The script checks the installed Xray version before changing files. It creates
+a backup under `/var/backups/reality-vless-upgrade.*` and prints the exact backup
+path when the update completes.
+
+Activating the private control socket may restart Xray once; connected clients
+may briefly reconnect.
+
+### 3. Verify the update and open the menu
+
+```bash
+sudo systemctl is-active reality-vless reality-vless-expire.timer reality-vless-limits
+sudo realityctl list
 sudo realityctl
 ```
 
@@ -26,10 +151,37 @@ This version requires **official Xray 26.10.29 or newer**. The upgrade checks th
 installed version before changing files and reports an error if it is too old.
 The Xray binary is preserved by this manager upgrade. Activating the private
 control socket may restart Xray once; active clients can reconnect.
+The service check should print `active` for all three units. Confirm your clients
+appear in the listing. If a unit is inactive or the update reports an error,
+use [Diagnostics](#diagnostics) to inspect the relevant service.
 
-If the server uses a different checkout location, change the `cd` path. If Git
-reports local edits, review them before updating; do not discard server changes
-blindly. Server credentials belong in `/etc/reality-vless/`, never in this repo.
+### Settings preserved during updates
+
+- Server keys, client UUIDs, and existing connection links.
+- Active and expired client records, including their expiration settings.
+- Previously configured public-IP slot limits.
+
+Clients from a version without IP limits default to **Unlimited**. Accounts from
+the original pre-expiry installer are imported with **no expiry**. Re-running
+the update preserves existing settings.
+
+The backup includes the installed manager and `/etc/reality-vless/`, plus any
+existing expiry/controller files being replaced. Keep it private because it
+contains server credentials.
+
+### Xray core updates
+
+`upgrade.sh` preserves the installed **Xray binary**. You can check its version:
+
+```bash
+/usr/local/bin/xray-reality version
+```
+
+If it is older than **26.10.29**, the manager update stops before changing files.
+Update Xray separately using an [official release](https://github.com/XTLS/Xray-core/releases),
+verify the download digest, back up the current binary, and validate the server
+configuration before replacing it. Then run `sudo bash upgrade.sh` again.
+This project currently has no automatic Xray core updater.
 
 ## Client menu
 
@@ -162,56 +314,6 @@ Add, Renew, and Find print a private `vless://` link. Treat it as an access
 credential and share it only with the intended user. The listing contains no
 connection links. Clients have distinct random UUIDs; their REALITY transport
 keys are shared at the server level.
-
-## Fresh installation
-
-Clone the project (install `git` first if needed):
-
-```bash
-git clone https://github.com/johntejano2241/vless-reality-install.git
-cd vless-reality-install
-sudo bash install.sh
-sudo realityctl
-```
-
-Review the source before executing it with root privileges. The installer asks
-for:
-
-- Your server's public IPv4 address or a DNS-only hostname resolving to it.
-  Cloudflare's ordinary HTTP proxy must be disabled for this server hostname.
-- A reachable public TLS 1.3 hostname supporting HTTP/2 as the REALITY target.
-  `www.microsoft.com` is an example to test, not a guarantee of suitability.
-- An available TCP port, **443** by default. If a web server or OpenVPN uses
-  TCP 443 already, choose another port or a separate IP/server. OpenVPN on
-  UDP/TCP 1194 can coexist.
-
-Allow the selected TCP port in both the host and provider firewalls. If UFW is
-already active and you chose 443:
-
-```bash
-sudo ufw allow 443/tcp
-```
-
-Installation preserves existing firewall and SSH rules and OpenVPN settings.
-There are initially zero authorized clients. Import the generated link into a
-current client supporting VLESS + REALITY + `xtls-rprx-vision`, such as Happ.
-Use the client's VPN mode for device-wide routing and verify its DNS, IPv6,
-application exclusions, and kill-switch settings.
-
-The installer checks the target certificate, TLS 1.3 and h2 negotiation, resolves
-one official Xray release, and verifies GitHub's SHA-256 asset digest before
-executing the binary. Missing digests cause installation to stop. This protects
-download integrity; it is not an independent publisher signature. To request a
-specific official release, replace the example tag:
-
-```bash
-sudo env XRAY_VERSION=vX.Y.Z bash install.sh
-```
-
-Re-running the fresh installer refuses existing managed paths. Use `upgrade.sh`
-for the client-manager upgrade. Xray itself has no automatic updater here;
-review upstream release notes, verify the replacement digest, and test before
-updating the installed binary.
 
 ## State and recovery
 

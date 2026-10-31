@@ -55,7 +55,7 @@ class Target(BaseHTTPRequestHandler):
                 while not STOP.wait(0.5):
                     self.wfile.write(b'.')
                     self.wfile.flush()
-        except (BrokenPipeError, ConnectionResetError):
+        except (BrokenPipeError, ConnectionResetError, ssl.SSLEOFError):
             pass
 
 
