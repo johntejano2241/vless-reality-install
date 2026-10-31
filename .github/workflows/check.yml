@@ -1,0 +1,44 @@
+name: Checks
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  test:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Syntax and lifecycle tests
+        run: |
+          bash -n install.sh
+          python3 -m unittest discover -s tests -v
+          shellcheck install.sh
+      - name: Validate generated config using current Xray release
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y python3-cryptography
+          curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest -o release.json
+          url=$(jq -er '.assets[] | select(.name=="Xray-linux-64.zip") | .browser_download_url' release.json)
+          digest=$(jq -er '.assets[] | select(.name=="Xray-linux-64.zip") | .digest' release.json)
+          [[ $digest =~ ^sha256:[a-f0-9]{64}$ ]]
+          curl -fsSL "$url" -o xray.zip
+          printf '%s  xray.zip\n' "${digest#sha256:}" | sha256sum -c -
+          unzip -p xray.zip xray > xray
+          chmod +x xray
+          /usr/bin/python3 - <<'PY'
+          import importlib.util, json
+          spec = importlib.util.spec_from_file_location('m', 'realityctl.py')
+          m = importlib.util.module_from_spec(spec)
+          spec.loader.exec_module(m)
+          private, public = m.keypair()
+          config = m.make_config('www.microsoft.com', 443, private)
+          config['inbounds'][0]['streamSettings']['realitySettings']['shortIds'] = ['0123456789abcdef']
+          for name in ['empty', 'added', 'revoked']:
+              if name == 'added':
+                  m.change(config, 'add', 'phone')
+              if name == 'revoked':
+                  m.change(config, 'revoke', 'phone')
+              with open(name + '.json', 'w') as f:
+                  json.dump(config, f)
+          PY
+          for config in empty added revoked; do ./xray run -test -config "$config.json"; done
