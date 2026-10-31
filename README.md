@@ -1,135 +1,223 @@
 # VLESS + REALITY installer for Ubuntu 22.04
 
-A small, dedicated Xray server installer with named client creation and revocation.
-Designed for a fresh Ubuntu 22.04 systemd VPS (x86_64 or ARM64). It runs beside
-OpenVPN using its own binary, configuration, service, and TCP listener.
+Install a dedicated Xray server and manage clients through a menu or CLI.
+Supports Ubuntu 22.04 with systemd on x86_64 and ARM64. It can run beside OpenVPN
+using a separate service and an available TCP port.
 
-**Status:** local syntax and mocked lifecycle tests are available. Real Ubuntu
-installation, client connectivity, and censorship resistance require deployment
-validation. No guarantee of bypassing every firewall or the Great Firewall.
+## Upgrade an existing installation
 
-## Install
+On your server, inside the existing checkout:
 
-Clone this repository (install `git` first if it is missing):
+```bash
+cd ~/vless-reality-install
+git pull --ff-only
+sudo bash upgrade.sh
+sudo realityctl
+```
+
+`upgrade.sh` backs up the installed manager and `/etc/reality-vless/` under
+`/var/backups/reality-vless-upgrade.*`, replaces the client manager, imports
+existing accounts, and enables the expiry timer. It preserves the installed Xray
+binary, server keys, client UUIDs, and connection links.
+
+**Existing clients are imported with no expiry.** New clients use the expiry you
+choose. Re-running the upgrade preserves existing expiry settings.
+
+If the server uses a different checkout location, change the `cd` path. If Git
+reports local edits, review them before updating; do not discard server changes
+blindly. Server credentials belong in `/etc/reality-vless/`, never in this repo.
+
+## Client menu
+
+Run:
+
+```bash
+sudo realityctl
+```
+
+The menu provides:
+
+1. **Add client** — enter a unique name and expiration days.
+2. **Renew expired client** — retain the name and connection link, and choose a new expiry.
+3. **Find client** — show its name, status, expiry date, and connection link.
+4. **Show all clients** — show names, active/expired status, and expiry dates.
+5. **Remove client** — permanently remove a record and disable its access.
+
+Enter **0** to exit.
+
+For Add and Renew:
+
+- **0** means no expiry (`Never`).
+- **1 or more** means that many 24-hour days from the Add or Renew operation.
+- Negative values, fractions, and non-numeric values produce an error.
+
+Expiration dates are displayed in **Philippine time (UTC+08:00)** and stored as
+UTC timestamps. A client becomes expired at its expiration timestamp.
+
+New names must be 1–48 letters, digits, underscores or hyphens, beginning with a
+letter or digit. Add rejects an existing name regardless of capitalization,
+including expired accounts. Find, Renew, and Remove accept an unambiguous
+case-insensitive match. Legacy names that differ only by capitalization retain
+their identities; use their exact capitalization to select one.
+
+### Expired clients remain available for renewal
+
+Expiry disables connection access while keeping the complete client record in
+`/etc/reality-vless/clients.json`. It does not delete the name or UUID. Renewing
+an expired client restores access through the **same existing link**; there is
+no need to import a replacement into Happ or another compatible client.
+
+Renew applies to **expired clients only**. Renewing an active or missing client
+returns an error. To reuse an expired name, renew that record; Add will report
+that the name already exists. Remove is the explicit permanent deletion action.
+
+A systemd timer checks expiry every minute and shortly after boot. With a
+healthy timer and service, access is normally disabled within about one minute
+of expiry. Applying a changed access list restarts Xray, closing existing
+connections; other active clients may briefly reconnect. An unchanged sweep or
+client listing does not restart the service.
+
+Enforcement depends on the timer and a successful service update. Check the
+expiry-service journal if an update fails. Failed updates keep the client
+records and are retried by later sweeps.
+
+## CLI commands
+
+```bash
+# Add a client without expiry, or with 30 days of access
+sudo realityctl add phone --days 0
+sudo realityctl add laptop --days 30
+
+# Renew an expired client for 7 days, or permanently
+sudo realityctl renew laptop --days 7
+sudo realityctl renew phone --days 0
+
+# Find one client or list every retained record
+sudo realityctl find phone
+sudo realityctl list
+
+# Explicit permanent removal (also removes expired records)
+sudo realityctl remove phone
+
+# Check service health or immediately apply due expirations
+sudo realityctl status
+sudo realityctl expire
+```
+
+Add and Renew prompt for days when omitted in an interactive terminal. Automated
+commands must supply `--days`. Legacy command names remain available:
+`show NAME` aliases `find NAME`, and `revoke NAME` aliases `remove NAME`.
+
+Add, Renew, and Find print a private `vless://` link. Treat it as an access
+credential and share it only with the intended user. The listing contains no
+connection links. Clients have distinct random UUIDs; their REALITY transport
+keys are shared at the server level.
+
+## Fresh installation
+
+Clone the project (install `git` first if needed):
 
 ```bash
 git clone https://github.com/johntejano2241/vless-reality-install.git
 cd vless-reality-install
-```
-
-Inspect `install.sh` and `realityctl.py`, then run:
-
-```bash
 sudo bash install.sh
+sudo realityctl
 ```
 
-The prompts request:
+Review the source before executing it with root privileges. The installer asks
+for:
 
-- Your server's public IPv4 address or DNS-only hostname resolving to its IPv4.
-  Do not enable Cloudflare's ordinary HTTP proxy for this connection.
-- A reachable public TLS 1.3 hostname supporting HTTP/2, used as the REALITY target.
+- Your server's public IPv4 address or a DNS-only hostname resolving to it.
+  Cloudflare's ordinary HTTP proxy must be disabled for this server hostname.
+- A reachable public TLS 1.3 hostname supporting HTTP/2 as the REALITY target.
   `www.microsoft.com` is an example to test, not a guarantee of suitability.
-- An unused TCP port (443 by default). HTTPS already using TCP 443 requires a
-  different port or a separate IP/server. OpenVPN on UDP 1194 can coexist.
+- An available TCP port, **443** by default. If a web server or OpenVPN uses
+  TCP 443 already, choose another port or a separate IP/server. OpenVPN on
+  UDP/TCP 1194 can coexist.
 
-The installer checks the target certificate, TLS 1.3, and h2 negotiation. It
-resolves the latest official Xray release once and verifies GitHub's SHA-256
-asset digest before executing it. It refuses releases without that digest.
-To request a particular release, set `XRAY_VERSION` to an official `vX.Y.Z` tag:
-
-```bash
-sudo env XRAY_VERSION=vX.Y.Z bash install.sh
-```
-
-The digest protects download integrity but is not an independent publisher
-signature. Installation requires working GitHub access from the VPS.
-
-Allow inbound **TCP 443** (or the selected port) in both Ubuntu's firewall and
-your VPS provider's firewall. If UFW is already active, for example:
+Allow the selected TCP port in both the host and provider firewalls. If UFW is
+already active and you chose 443:
 
 ```bash
 sudo ufw allow 443/tcp
 ```
 
-This installer does not enable, flush, disable, or rewrite your firewall, change
-SSH settings, or touch OpenVPN. No NAT/IP-forwarding setup is required for this
-application proxy. There are initially zero authorized clients.
+Installation preserves existing firewall and SSH rules and OpenVPN settings.
+There are initially zero authorized clients. Import the generated link into a
+current client supporting VLESS + REALITY + `xtls-rprx-vision`, such as Happ.
+Use the client's VPN mode for device-wide routing and verify its DNS, IPv6,
+application exclusions, and kill-switch settings.
 
-## Add, list, show, revoke
+The installer checks the target certificate, TLS 1.3 and h2 negotiation, resolves
+one official Xray release, and verifies GitHub's SHA-256 asset digest before
+executing the binary. Missing digests cause installation to stop. This protects
+download integrity; it is not an independent publisher signature. To request a
+specific official release, replace the example tag:
 
 ```bash
-sudo realityctl add phone
-sudo realityctl add laptop
-sudo realityctl list
-sudo realityctl show phone
-sudo realityctl revoke phone
-sudo realityctl status
+sudo env XRAY_VERSION=vX.Y.Z bash install.sh
 ```
 
-`add` and `show` print a private `vless://` link. Import it into a compatible
-Hiddify, Happ, v2rayNG, or v2rayN client. Use a current client supporting
-VLESS + REALITY + `xtls-rprx-vision`. Enable VPN/TUN mode for device-wide routing;
-check client DNS, IPv6, routing exclusions and kill-switch behavior separately.
-A system proxy alone does not tunnel every application.
+Re-running the fresh installer refuses existing managed paths. Use `upgrade.sh`
+for the client-manager upgrade. Xray itself has no automatic updater here;
+review upstream release notes, verify the replacement digest, and test before
+updating the installed binary.
 
-Each client has a distinct random UUID. Revocation removes that UUID from the
-server configuration and restarts Xray, closing current connections. All other
-clients briefly disconnect and can reconnect with their existing links.
-Do not share one client's link across users: revoking it affects all its copies.
+## State and recovery
 
-## Security and operations
-
-- Configuration is the source of truth; management commands are serialized with
-  a lock. Each proposed change is tested by the installed Xray binary first.
-- If service restart fails, the previous configuration is restored and a restart
-  is attempted. Inspect the journal if recovery also fails.
-- Root manages credentials; the service runs as `reality-vless` with only the
-  capability to bind privileged ports and systemd filesystem restrictions.
-- No passwords, Linux login accounts per client, web admin panel, cron deletion,
-  traffic access log, or public subscription endpoint are created.
-- Clients share server REALITY transport keys, while each has a separate VLESS
-  UUID. Treat every exported link as a credential.
-- Proxy routing blocks common private, loopback and link-local destinations,
-  including cloud metadata addresses. This is defense in depth, not a complete
-  network isolation boundary; use provider/host egress controls when required.
-- Back up `/etc/reality-vless/` securely as root; it contains private credentials.
-  Never commit it, connection links, or terminal output with credentials to Git.
-- There is no automatic Xray updater. Review upstream changes, back up the binary
-  and configuration, verify the replacement release digest, test the config and
-  restart during a maintenance window. Ubuntu security updates remain separate.
-- Installer re-runs refuse existing managed paths instead of rotating keys or
-  overwriting users. If an interrupted install leaves partial files, inspect
-  them and recover manually; the installer does not automatically delete them.
-- The listener binds IPv4. Native IPv6-only server endpoints are not supported
-  by this installer. The client connection still needs explicit IPv6 leak checks.
+- `clients.json` is the authoritative account registry after migration. It keeps
+  active and expired identities and expiry settings with root-only permissions.
+- `config.json` contains only currently active client identities for Xray. The
+  manager regenerates its client list from the registry; manual client edits
+  made only to `config.json` will be replaced by the next sweep.
+- `server.json` holds link-generation metadata. Back up the whole
+  `/etc/reality-vless/` directory securely so keys and registry stay together.
+- Management operations and expiry sweeps use the same lock. The menu releases
+  the lock between operations so waiting for input never blocks expiry checks.
+- Configuration changes are validated by Xray before publishing. Ordinary
+  validation/restart failures preserve or restore the previous records and
+  configuration. A crash between atomic file replacements leaves the desired
+  registry intact for the next sweep to reconcile.
+- If recovery cannot restart Xray, inspect the journals and the root-only backup
+  created by the upgrade. Never commit backups, private keys, or connection links.
+- The runtime service uses a dedicated `reality-vless` account and restricted
+  systemd permissions. The expiry manager runs as root to update credentials and
+  restart the runtime service.
+- Routing blocks common private, loopback and link-local destinations, including
+  cloud metadata IPs. Use host/provider egress controls when stronger isolation
+  is required.
+- The listener binds IPv4. Native IPv6-only server endpoints are unsupported.
+- Connection success on one network does not guarantee access through every
+  firewall or continued availability in China.
 
 ## Diagnostics
 
 ```bash
+sudo realityctl list
+sudo systemctl status reality-vless --no-pager
+sudo systemctl status reality-vless-expire.timer --no-pager
+sudo systemctl list-timers reality-vless-expire.timer --all
+sudo journalctl -u reality-vless-expire -n 80 --no-pager
 sudo journalctl -u reality-vless -n 80 --no-pager
 sudo /usr/local/bin/xray-reality run -test -config /etc/reality-vless/config.json
-sudo ss -ltnp
 ```
 
-For connection failures check host/provider firewalls, port conflicts, target
-reachability, client compatibility, SNI/public key/short ID, and server IP
-blocking. A syntax-valid configuration does not prove end-to-end connectivity.
-
-## Development checks
+## Development and validation
 
 ```bash
-bash -n install.sh
+bash -n install.sh upgrade.sh install-expiry.sh tests/smoke_upgrade.sh
 python3 -m unittest discover -s tests -v
-shellcheck install.sh
+shellcheck install.sh upgrade.sh install-expiry.sh tests/smoke_upgrade.sh
 ```
 
-The included GitHub Actions workflow additionally downloads a digest-verified
-current Xray release and checks empty, added-client and revoked-client configs.
-That workflow must run after upload; it is not evidence of a completed VPS test.
+GitHub Actions also validates empty, added, expired, renewed and removed client
+configurations using a digest-verified Xray binary, then tests a legacy-state
+upgrade and renewal on a disposable Ubuntu 22.04 runner with real systemd
+services. The CI smoke script refuses execution outside a disposable Actions
+runner. CI does not establish connectivity from every phone or censored network.
 
 ## Upstream references
 
 - https://github.com/XTLS/Xray-core
 - https://xtls.github.io/en/config/inbounds/vless.html
-- https://xtls.github.io/en/config/transport.html
 - https://xtls.github.io/en/config/transports/reality.html

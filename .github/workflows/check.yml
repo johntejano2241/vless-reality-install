@@ -9,10 +9,10 @@ jobs:
       - uses: actions/checkout@v4
       - name: Syntax and lifecycle tests
         run: |
-          bash -n install.sh
+          bash -n install.sh upgrade.sh install-expiry.sh tests/smoke_upgrade.sh
           python3 -m unittest discover -s tests -v
-          shellcheck install.sh
-      - name: Validate generated config using current Xray release
+          shellcheck install.sh upgrade.sh install-expiry.sh tests/smoke_upgrade.sh
+      - name: Download verified Xray release
         run: |
           set -euo pipefail
           sudo apt-get update
@@ -25,20 +25,10 @@ jobs:
           printf '%s  xray.zip\n' "${digest#sha256:}" | sha256sum -c -
           unzip -p xray.zip xray > xray
           chmod +x xray
-          /usr/bin/python3 - <<'PY'
-          import importlib.util, json
-          spec = importlib.util.spec_from_file_location('m', 'realityctl.py')
-          m = importlib.util.module_from_spec(spec)
-          spec.loader.exec_module(m)
-          private, public = m.keypair()
-          config = m.make_config('www.microsoft.com', 443, private)
-          config['inbounds'][0]['streamSettings']['realitySettings']['shortIds'] = ['0123456789abcdef']
-          for name in ['empty', 'added', 'revoked']:
-              if name == 'added':
-                  m.change(config, 'add', 'phone')
-              if name == 'revoked':
-                  m.change(config, 'revoke', 'phone')
-              with open(name + '.json', 'w') as f:
-                  json.dump(config, f)
-          PY
-          for config in empty added revoked; do ./xray run -test -config "$config.json"; done
+      - name: Validate lifecycle configs with real Xray
+        run: /usr/bin/python3 tests/validate_xray.py "$PWD/xray"
+      - name: Smoke test existing-server upgrade on Ubuntu 22.04
+        run: sudo env GITHUB_ACTIONS=true bash tests/smoke_upgrade.sh "$PWD/xray"
+      - name: Show service diagnostics on failure
+        if: failure()
+        run: sudo journalctl -u reality-vless -u reality-vless-expire --no-pager -n 80

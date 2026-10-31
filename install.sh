@@ -7,11 +7,13 @@ source /etc/os-release
 [[ $ID == ubuntu && $VERSION_ID == 22.04 ]] || { echo 'Requires Ubuntu 22.04.' >&2; exit 1; }
 [[ -d /run/systemd/system ]] || { echo 'Requires systemd.' >&2; exit 1; }
 base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
-[[ -f "$base/realityctl.py" ]] || { echo 'Extract the complete project first.' >&2; exit 1; }
-exec 9>/run/lock/reality-installer.lock
+for source_file in realityctl.py install-expiry.sh systemd/reality-vless-expire.service systemd/reality-vless-expire.timer; do
+  [[ -f "$base/$source_file" ]] || { echo 'Extract the complete project first.' >&2; exit 1; }
+done
+exec 9>>/run/lock/reality-installer.lock
 flock -n 9 || { echo 'Another installation is running.' >&2; exit 1; }
-for path in /etc/reality-vless /usr/local/lib/reality-vless /usr/local/bin/realityctl /usr/local/bin/xray-reality /etc/systemd/system/reality-vless.service; do
-  [[ ! -e $path ]] || { echo "Refusing to overwrite $path. Use realityctl for existing installations." >&2; exit 1; }
+for path in /etc/reality-vless /usr/local/lib/reality-vless /usr/local/bin/realityctl /usr/local/bin/xray-reality /etc/systemd/system/reality-vless.service /etc/systemd/system/reality-vless-expire.service /etc/systemd/system/reality-vless-expire.timer; do
+  [[ ! -e $path ]] || { echo "Refusing to overwrite $path. Use upgrade.sh for an existing installation." >&2; exit 1; }
 done
 read -r -p 'Public server IP or DNS hostname (DNS-only, no CDN proxy): ' endpoint
 read -r -p 'REALITY target hostname (reachable TLS 1.3 site, e.g. www.microsoft.com): ' sni
@@ -90,6 +92,8 @@ UNIT
 systemctl daemon-reload
 systemctl enable --now reality-vless
 systemctl is-active --quiet reality-vless
-printf '\nInstalled. No clients exist yet. Run: sudo realityctl add phone\n'
+bash "$base/install-expiry.sh"
+printf '\nInstalled. No clients exist yet. Open the menu: sudo realityctl\n'
 printf 'Allow inbound TCP %s in your host AND provider firewalls. Existing firewall/SSH rules were preserved.\n' "$port"
 printf 'Release: %s\n' "$(jq -r .tag_name "$tmp/release.json")"
+

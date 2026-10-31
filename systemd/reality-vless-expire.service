@@ -1,0 +1,15 @@
+[Unit]
+Description=Apply VLESS client expirations without deleting client records
+After=reality-vless.service
+ConditionPathExists=/etc/reality-vless/config.json
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/realityctl expire
+TimeoutStartSec=120
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/reality-vless /run/lock

@@ -1,0 +1,11 @@
+[Unit]
+Description=Check VLESS client expiry every minute
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=1min
+AccuracySec=1s
+Unit=reality-vless-expire.service
+
+[Install]
+WantedBy=timers.target
