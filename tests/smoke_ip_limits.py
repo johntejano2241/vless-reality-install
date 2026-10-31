@@ -4,6 +4,7 @@ import json
 import os
 from pathlib import Path
 import socket
+import ssl
 import subprocess
 import tempfile
 import threading
@@ -59,9 +60,9 @@ class Target(BaseHTTPRequestHandler):
 
 
 def curl_args(port, path='/', maximum='5'):
-    return ['curl', '--silent', '--show-error', '--no-buffer', '--noproxy', '',
+    return ['curl', '--silent', '--show-error', '--no-buffer', '--insecure', '--noproxy', '',
             '--proxy', f'socks5h://127.0.0.1:{port}', '--connect-timeout', '3',
-            '--max-time', maximum, f'http://{TARGET_IP}:18080{path}']
+            '--max-time', maximum, f'https://{TARGET_IP}:18080{path}']
 
 
 def fetch(port):
@@ -84,12 +85,23 @@ def main():
                 command('ip', 'address', 'add', address + '/32', 'dev', 'lo')
                 aliases.append(address)
             httpd = ThreadingHTTPServer((TARGET_IP, 18080), Target)
+            cert, key = root / 'target.crt', root / 'target.key'
+            command('openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+                '-subj', '/CN=local-ip-slot-test', '-keyout', str(key), '-out', str(cert))
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.minimum_version = ssl.TLSVersion.TLSv1_3
+            context.load_cert_chain(cert, key)
+            httpd.socket = context.wrap_socket(httpd.socket, server_side=True)
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
-            direct = command('curl', '--silent', '--show-error', '--noproxy', '*', '--max-time', '3', f'http://{TARGET_IP}:18080/')
+            direct = command('curl', '--silent', '--show-error', '--insecure', '--noproxy', '*', '--max-time', '3', f'https://{TARGET_IP}:18080/')
             assert MARKER.decode() in direct.stdout, 'The local HTTP fixture is unavailable'
             command('realityctl', 'add', 'slot-limited', '--days', '0', '--devices', '1')
             command('realityctl', 'add', 'slot-unlimited', '--days', '0', '--devices', '0')
             config = json.loads(Path('/etc/reality-vless/config.json').read_text())
+            config['log']['loglevel'] = 'info'
+            Path('/etc/reality-vless/config.json').write_text(json.dumps(config))
+            command('systemctl', 'reset-failed', 'reality-vless', 'reality-vless-limits')
+            command('systemctl', 'restart', 'reality-vless')
             meta = json.loads(Path('/etc/reality-vless/server.json').read_text())
             records = json.loads(Path('/etc/reality-vless/clients.json').read_text())['clients']
             users = {record['name']: record['user']['id'] for record in records}
@@ -100,7 +112,7 @@ def main():
                 ('slot-limited', SOURCE1), ('slot-limited', SOURCE2),
                 ('slot-unlimited', SOURCE2), ('slot-limited', SOURCE1)]):
                 port = 19081 + index
-                client = {'log': {'loglevel': 'warning'},
+                client = {'log': {'loglevel': 'info'},
                     'inbounds': [{'listen': '127.0.0.1', 'port': port, 'protocol': 'socks', 'settings': {'udp': False}}],
                     'outbounds': [{'protocol': 'vless', 'sendThrough': source,
                         'settings': {'vnext': [{'address': SERVER_IP, 'port': config['inbounds'][0]['port'],
@@ -115,6 +127,7 @@ def main():
                 processes.append(subprocess.Popen([XRAY, 'run', '-config', str(path)], stdout=log, stderr=log))
             time.sleep(1)
             invocation = command('systemctl', 'show', 'reality-vless', '-p', 'InvocationID', '--value').stdout
+            wait_for(lambda: fetch(19083), 20, 'The unlimited control account cannot reach the HTTPS fixture')
             wait_for(lambda: fetch(19081), 40, 'First source IP was not admitted')
             hold_output = (root / 'hold-output').open('wb')
             handles.append(hold_output)
@@ -144,6 +157,7 @@ def main():
             # CI fixtures only: preserve useful diagnostics before cleanup restarts services.
             for args in [
                 ['journalctl', '-u', 'reality-vless-limits', '--no-pager', '-n', '80'],
+                ['journalctl', '-u', 'reality-vless', '--no-pager', '-n', '80'],
                 [XRAY, 'api', 'statsonlineiplist', '--server=unix:///run/reality-vless-api/control.sock', '-all'],
                 ['systemctl', 'show', 'reality-vless-limits', '-p', 'ActiveState', '-p', 'ExecMainStatus']]:
                 result = subprocess.run(args, capture_output=True, text=True)
