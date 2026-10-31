@@ -10,5 +10,6 @@ install -m 644 "$base/systemd/reality-vless-limits.service" /etc/systemd/system/
 systemctl daemon-reload
 /usr/bin/python3 /usr/local/lib/reality-vless/realityctl.py configure-limits
 systemctl enable reality-vless-limits
+systemctl reset-failed reality-vless-limits
 systemctl restart reality-vless-limits
 systemctl is-active --quiet reality-vless-limits

@@ -310,7 +310,7 @@ def share_link(config, meta, record):
 def restart_service():
     # Client edits are deliberate, validated restarts. Reset their start counter
     # so a batch of additions cannot exhaust systemd's crash-loop rate limit.
-    subprocess.run(['systemctl', 'reset-failed', SERVICE], check=True, timeout=10)
+    subprocess.run(['systemctl', 'reset-failed', SERVICE, IP_SERVICE], check=True, timeout=10)
     subprocess.run(['systemctl', 'restart', SERVICE], check=True, timeout=45)
     subprocess.run(['systemctl', 'is-active', '--quiet', SERVICE], check=True, timeout=10)
 
