@@ -190,7 +190,7 @@ class DiskLifecycleTests(unittest.TestCase):
     def test_restart_failure_restores_both_files(self):
         m.execute('add', 'phone', 0)
         original_config, original_registry = self.config(), self.registry()
-        self.run.side_effect = [None, subprocess.CalledProcessError(1, 'restart'), None, None]
+        self.run.side_effect = [None, None, subprocess.CalledProcessError(1, 'restart'), None, None, None]
         with self.assertRaisesRegex(RuntimeError, 'previous client records'):
             m.execute('remove', 'phone')
         self.assertEqual(self.config(), original_config)
@@ -201,7 +201,7 @@ class DiskLifecycleTests(unittest.TestCase):
         m.execute('add', 'phone', 1)
         later = NOW + timedelta(days=2)
         with patch.object(m, 'utcnow', return_value=later):
-            self.run.side_effect = [None, subprocess.CalledProcessError(1, 'restart'), None, None]
+            self.run.side_effect = [None, None, subprocess.CalledProcessError(1, 'restart'), None, None, None]
             with self.assertRaises(RuntimeError):
                 m.execute('expire')
             self.assertEqual(len(self.registry()['clients']), 1)
@@ -247,7 +247,7 @@ class DiskLifecycleTests(unittest.TestCase):
         self.assertEqual(self.registry()['clients'], [])
 
     def test_menu_add_find_list_remove_and_duplicate_error(self):
-        inputs = ['1', 'andrea', '0', '1', 'ANDREA', '1', '3', 'andrea', '4', '5', 'andrea', 'y', '0']
+        inputs = ['1', 'andrea', '0', '0', '1', 'ANDREA', '1', '0', '3', 'andrea', '4', '5', 'andrea', 'y', '0']
         with patch('builtins.input', side_effect=inputs):
             m.main([])
         self.assertIn('already exists', self.errors.getvalue())
@@ -287,3 +287,4 @@ class DiskLifecycleTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

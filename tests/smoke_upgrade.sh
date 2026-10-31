@@ -56,8 +56,11 @@ root = pathlib.Path('/etc/reality-vless')
 legacy = json.loads(pathlib.Path('/tmp/reality-legacy-config.json').read_text())
 current = json.loads((root / 'config.json').read_text())
 records = json.loads((root / 'clients.json').read_text())['clients']
-assert current == legacy
+for key, value in legacy.items():
+    assert current[key] == value
+assert current['api']['listen'] == '/run/reality-vless-api/control.sock'
 assert len(records) == 1 and records[0]['expires_at'] is None
+assert records[0]['device_limit'] == 0
 assert records[0]['user'] == legacy['inbounds'][0]['settings']['clients'][0]
 PY
 # Re-running the upgrade is idempotent and preserves existing records.
@@ -98,9 +101,11 @@ printf '4\n0\n' | realityctl >/dev/null
 realityctl remove test-phone >/dev/null
 systemctl is-active --quiet reality-vless
 systemctl is-active --quiet reality-vless-expire.timer
+systemctl is-active --quiet reality-vless-limits
 /usr/bin/python3 - <<'PY'
 import json, pathlib
 records = json.loads(pathlib.Path('/etc/reality-vless/clients.json').read_text())['clients']
 assert [r['name'] for r in records] == ['andrea']
 PY
 echo 'Upgrade, migration, expiry, retained-link renewal, menu, and removal smoke checks passed.'
+

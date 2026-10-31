@@ -20,7 +20,7 @@ with tempfile.TemporaryDirectory() as tmp:
     for phase in ['empty', 'added', 'expired', 'renewed', 'removed']:
         moment = now
         if phase == 'added':
-            registry = m.edit_clients(registry, 'add', 'phone', 1, now)
+            registry = m.edit_clients(registry, 'add', 'phone', 1, now, devices=2)
         elif phase in ['expired', 'renewed', 'removed']:
             moment = now + timedelta(days=2)
             if phase == 'renewed':
@@ -31,3 +31,10 @@ with tempfile.TemporaryDirectory() as tmp:
         path.write_text(json.dumps(m.render_config(config, registry, moment)))
         subprocess.run([binary, 'run', '-test', '-config', str(path)], check=True)
         print(f'{phase}: Xray configuration accepted')
+        if phase == 'added':
+            identity = registry['clients'][0]['user']['id']
+            active = m.render_config(config, registry, moment)
+            active['routing'] = m.ip_routing(active, registry, moment, {identity: {'198.51.100.1': moment.timestamp()}})
+            path.write_text(json.dumps(active))
+            subprocess.run([binary, 'run', '-test', '-config', str(path)], check=True)
+

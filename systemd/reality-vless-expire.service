@@ -13,3 +13,4 @@ PrivateTmp=true
 ProtectHome=true
 ProtectSystem=strict
 ReadWritePaths=/etc/reality-vless /run/lock
+

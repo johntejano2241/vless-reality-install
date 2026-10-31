@@ -1,6 +1,6 @@
 # VLESS + REALITY installer for Ubuntu 22.04
 
-Install a dedicated Xray server and manage clients through a menu or CLI.
+Install a dedicated Xray server and manage expiry and per-client public-IP slots through a menu or CLI.
 Supports Ubuntu 22.04 with systemd on x86_64 and ARM64. It can run beside OpenVPN
 using a separate service and an available TCP port.
 
@@ -17,11 +17,15 @@ sudo realityctl
 
 `upgrade.sh` backs up the installed manager and `/etc/reality-vless/` under
 `/var/backups/reality-vless-upgrade.*`, replaces the client manager, imports
-existing accounts, and enables the expiry timer. It preserves the installed Xray
+existing accounts, enables the expiry timer, and installs the IP-slot controller. It preserves the installed Xray
 binary, server keys, client UUIDs, and connection links.
 
-**Existing clients are imported with no expiry.** New clients use the expiry you
-choose. Re-running the upgrade preserves existing expiry settings.
+**Existing clients keep their connection links and expiry settings, and default to unlimited IP slots.** Accounts from the original pre-expiry installer are imported with no expiry. Re-running the upgrade preserves existing settings.
+
+This version requires **official Xray 26.10.29 or newer**. The upgrade checks the
+installed version before changing files and reports an error if it is too old.
+The Xray binary is preserved by this manager upgrade. Activating the private
+control socket may restart Xray once; active clients can reconnect.
 
 If the server uses a different checkout location, change the `cd` path. If Git
 reports local edits, review them before updating; do not discard server changes
@@ -37,10 +41,10 @@ sudo realityctl
 
 The menu provides:
 
-1. **Add client** — enter a unique name and expiration days.
+1. **Add client** — enter a unique name, expiration days, then the device/IP-slot limit.
 2. **Renew expired client** — retain the name and connection link, and choose a new expiry.
 3. **Find client** — show its name, status, expiry date, and connection link.
-4. **Show all clients** — show names, active/expired status, and expiry dates.
+4. **Show all clients** — show names, active/expired status, expiry dates, and IP-slot limits.
 5. **Remove client** — permanently remove a record and disable its access.
 
 Enter **0** to exit.
@@ -50,6 +54,50 @@ For Add and Renew:
 - **0** means no expiry (`Never`).
 - **1 or more** means that many 24-hour days from the Add or Renew operation.
 - Negative values, fractions, and non-numeric values produce an error.
+
+For Add, the next prompt is **Multiple devices / public-IP slots**:
+
+- **0** means no limit.
+- **1 or more** sets the allowed number of simultaneous source IPs for that client.
+- Negative values, fractions, and non-numeric values produce an error.
+
+The order is:
+
+```text
+Client name
+Expiration days (0 = no expiry, 1 or more = days)
+Multiple devices / public-IP slots (0 = no limit, 1 or more = limit)
+```
+
+### How IP slots work
+
+As selected for this project, the limit counts **source IP addresses seen by the
+server**, rather than physical devices. Several phones on the same Wi-Fi or
+carrier NAT can share one slot. A phone switching between Wi-Fi and mobile data
+may appear as a different IP. A physical-device limit cannot be reliably enforced
+from a shared VLESS link.
+
+For limited clients, new source IPs are initially denied and admitted through a
+private local controller when capacity is available. The first request may fail
+while a slot is admitted; retry after a few seconds. Excess IPs remain denied for
+that client. Other accounts using the same IP retain their own access; no global
+IP firewall bans are added.
+
+Slots remain occupied while Xray reports live connections, including long-lived
+streams. After all connections from an IP close, a **30-second idle grace** keeps
+short browsing gaps from causing repeated admissions. The controller checks about
+every five seconds while healthy. The free slot can then be used by a new
+source IP. Changing networks may require the old connections to close first.
+
+Slot admissions update Xray routing in memory, without restarting the server or
+interrupting admitted streams. The on-disk config denies limited clients until
+admitted, including after a reboot. If the controller or its statistics query
+fails, new IPs remain denied for limited clients; already applied rules remain in
+place. Check `reality-vless-limits` before diagnosing a blocked limited account.
+
+Existing clients default to **Unlimited**. Renewal keeps the configured limit
+and the same connection link. The limit is enforced by the server, not encoded
+as an unsupported extra field in the `vless://` link.
 
 Expiration dates are displayed in **Philippine time (UTC+08:00)** and stored as
 UTC timestamps. A client becomes expired at its expiration timestamp.
@@ -85,8 +133,8 @@ records and are retried by later sweeps.
 
 ```bash
 # Add a client without expiry, or with 30 days of access
-sudo realityctl add phone --days 0
-sudo realityctl add laptop --days 30
+sudo realityctl add phone --days 0 --devices 0
+sudo realityctl add laptop --days 30 --devices 2
 
 # Renew an expired client for 7 days, or permanently
 sudo realityctl renew laptop --days 7
@@ -104,8 +152,10 @@ sudo realityctl status
 sudo realityctl expire
 ```
 
-Add and Renew prompt for days when omitted in an interactive terminal. Automated
-commands must supply `--days`. Legacy command names remain available:
+Add and Renew prompt for days when omitted in an interactive terminal. Add then
+prompts for the device/IP-slot limit. Automated commands must supply `--days`;
+`--devices` defaults to `0` when omitted non-interactively, preserving older
+automation. Legacy command names remain available:
 `show NAME` aliases `find NAME`, and `revoke NAME` aliases `remove NAME`.
 
 Add, Renew, and Find print a private `vless://` link. Treat it as an access
@@ -170,6 +220,13 @@ updating the installed binary.
 - `config.json` contains only currently active client identities for Xray. The
   manager regenerates its client list from the registry; manual client edits
   made only to `config.json` will be replaced by the next sweep.
+- `/run/reality-vless-limits/slots.json` stores transient admitted IPs and last-seen
+  times with root-only permissions. The controller discards webhook destination
+  fields instead of storing browsing history. Runtime slots are reset after reboot.
+- The Xray statistics/routing API and admission notifications use private Unix
+  sockets, with no public admin port. Notifications accept only the Xray service
+  UID or root. The manager keeps destination security blocks ahead of client allow
+  rules.
 - `server.json` holds link-generation metadata. Back up the whole
   `/etc/reality-vless/` directory securely so keys and registry stay together.
 - Management operations and expiry sweeps use the same lock. The menu releases
@@ -196,6 +253,8 @@ updating the installed binary.
 sudo realityctl list
 sudo systemctl status reality-vless --no-pager
 sudo systemctl status reality-vless-expire.timer --no-pager
+sudo systemctl status reality-vless-limits --no-pager
+sudo journalctl -u reality-vless-limits -n 80 --no-pager
 sudo systemctl list-timers reality-vless-expire.timer --all
 sudo journalctl -u reality-vless-expire -n 80 --no-pager
 sudo journalctl -u reality-vless -n 80 --no-pager
@@ -205,15 +264,18 @@ sudo /usr/local/bin/xray-reality run -test -config /etc/reality-vless/config.jso
 ## Development and validation
 
 ```bash
-bash -n install.sh upgrade.sh install-expiry.sh tests/smoke_upgrade.sh
+bash -n install.sh upgrade.sh install-expiry.sh install-ip-limits.sh tests/smoke_upgrade.sh
 python3 -m unittest discover -s tests -v
-shellcheck install.sh upgrade.sh install-expiry.sh tests/smoke_upgrade.sh
+shellcheck install.sh upgrade.sh install-expiry.sh install-ip-limits.sh tests/smoke_upgrade.sh
 ```
 
 GitHub Actions also validates empty, added, expired, renewed and removed client
 configurations using a digest-verified Xray binary, then tests a legacy-state
 upgrade and renewal on a disposable Ubuntu 22.04 runner with real systemd
-services. The CI smoke script refuses execution outside a disposable Actions
+services. It also exercises real VLESS + REALITY connections from different
+source addresses: one-slot admission, same-IP sharing, excess-IP refusal,
+independent unlimited accounts, uninterrupted admitted streams, and reuse after
+disconnect. The CI smoke scripts refuse execution outside a disposable Actions
 runner. CI does not establish connectivity from every phone or censored network.
 
 ## Upstream references
@@ -221,3 +283,4 @@ runner. CI does not establish connectivity from every phone or censored network.
 - https://github.com/XTLS/Xray-core
 - https://xtls.github.io/en/config/inbounds/vless.html
 - https://xtls.github.io/en/config/transports/reality.html
+
