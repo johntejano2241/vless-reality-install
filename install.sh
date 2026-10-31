@@ -17,8 +17,15 @@ read -r -p 'Public server IP or DNS hostname (DNS-only, no CDN proxy): ' endpoin
 read -r -p 'REALITY target hostname (reachable TLS 1.3 site, e.g. www.microsoft.com): ' sni
 read -r -p 'Listen TCP port [443]: ' port
 port=${port:-443}
-[[ $port =~ ^[0-9]+$ && ${#port} -le 5 ]] && ((10#$port >= 1 && 10#$port <= 65535)) || { echo 'Invalid port.' >&2; exit 1; }
+if [[ ! $port =~ ^[0-9]+$ || ${#port} -gt 5 ]]; then
+  echo 'Invalid port.' >&2
+  exit 1
+fi
 port=$((10#$port))
+if ((port < 1 || port > 65535)); then
+  echo 'Invalid port.' >&2
+  exit 1
+fi
 [[ -z $(ss -H -ltn "sport = :$port") ]] || { echo 'TCP port is already occupied.' >&2; exit 1; }
 apt-get update
 apt-get install -y ca-certificates curl unzip jq python3 python3-cryptography openssl
