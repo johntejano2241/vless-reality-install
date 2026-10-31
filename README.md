@@ -140,6 +140,17 @@ sudo realityctl list
 sudo realityctl
 ```
 
+`upgrade.sh` backs up the installed manager and `/etc/reality-vless/` under
+`/var/backups/reality-vless-upgrade.*`, replaces the client manager, imports
+existing accounts, enables the expiry timer, and installs the IP-slot controller. It preserves the installed Xray
+binary, server keys, client UUIDs, and connection links.
+
+**Existing clients keep their connection links and expiry settings, and default to unlimited IP slots.** Accounts from the original pre-expiry installer are imported with no expiry. Re-running the upgrade preserves existing settings.
+
+This version requires **official Xray 26.10.29 or newer**. The upgrade checks the
+installed version before changing files and reports an error if it is too old.
+The Xray binary is preserved by this manager upgrade. Activating the private
+control socket may restart Xray once; active clients can reconnect.
 The service check should print `active` for all three units. Confirm your clients
 appear in the listing. If a unit is inactive or the update reports an error,
 use [Diagnostics](#diagnostics) to inspect the relevant service.
