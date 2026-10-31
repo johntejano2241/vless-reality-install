@@ -99,6 +99,12 @@ def main():
             command('realityctl', 'add', 'slot-unlimited', '--days', '0', '--devices', '0')
             config = json.loads(Path('/etc/reality-vless/config.json').read_text())
             config['log']['loglevel'] = 'info'
+            # Xray's default freedom policy blocks reserved destinations even
+            # after routing allows them. Permit only this disposable local TLS
+            # fixture; production configs keep the default destination policy.
+            direct_outbound = next(outbound for outbound in config['outbounds'] if outbound.get('tag') == 'direct')
+            direct_outbound.setdefault('settings', {})['finalRules'] = [
+                {'action': 'allow', 'network': 'tcp', 'ip': [TARGET_IP + '/32'], 'port': '18080'}]
             Path('/etc/reality-vless/config.json').write_text(json.dumps(config))
             command('systemctl', 'reset-failed', 'reality-vless', 'reality-vless-limits')
             command('systemctl', 'restart', 'reality-vless')

@@ -85,8 +85,8 @@ IP firewall bans are added.
 
 Slots remain occupied while Xray reports live connections, including long-lived
 streams. After all connections from an IP close, a **30-second idle grace** keeps
-short browsing gaps from causing repeated admissions. The controller checks at
-least every five seconds while healthy. The free slot can then be used by a new
+short browsing gaps from causing repeated admissions. The controller checks about
+every five seconds while healthy. The free slot can then be used by a new
 source IP. Changing networks may require the old connections to close first.
 
 Slot admissions update Xray routing in memory, without restarting the server or
