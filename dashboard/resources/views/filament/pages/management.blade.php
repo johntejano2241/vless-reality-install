@@ -1,5 +1,6 @@
 <x-filament-panels::page>
-    <div wire:poll.15s class="space-y-6">
+    <style>.esmi-console{display:grid;gap:1.5rem}.esmi-console table{border-collapse:collapse;width:100%}.esmi-console td,.esmi-console th{padding:.85rem;text-align:left;border-bottom:1px solid #94a3b833}.esmi-console label{display:block;font-size:.9rem}.esmi-console input:not([type=checkbox]),.esmi-console select,.esmi-console textarea{display:block;width:100%;padding:.6rem .75rem;margin-top:.4rem;border:1px solid #94a3b866;border-radius:.6rem;background:transparent;color:inherit}.esmi-console .grid{display:grid;gap:1rem}.esmi-console .flex{display:flex;flex-wrap:wrap;gap:.75rem}.esmi-console p{line-height:1.65}.esmi-console .mt-3{margin-top:.75rem}.esmi-console .mt-4{margin-top:1rem}.esmi-console .mt-5{margin-top:1.25rem}.esmi-console .overflow-x-auto{overflow-x:auto}.esmi-console .text-amber-600{color:#d97706}.esmi-console .text-red-600{color:#dc2626}.esmi-console .break-all{overflow-wrap:anywhere}@media(min-width:768px){.esmi-console .md\:grid-cols-2{grid-template-columns:repeat(2,minmax(0,1fr))}.esmi-console .md\:grid-cols-3{grid-template-columns:repeat(3,minmax(0,1fr))}.esmi-console .md\:col-span-2{grid-column:span 2}}</style>
+    <div wire:poll.15s class="esmi-console space-y-6">
         <x-filament::section>
             <p class="text-sm text-gray-500">Administrator workspace · status is collected from the private VPN manager. Account changes can briefly reconnect users on that node.</p>
             @if(in_array($this->section(),['clients','operations','nodes']))

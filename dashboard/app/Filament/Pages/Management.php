@@ -26,9 +26,11 @@ abstract class Management extends Page
     public function mount(): void
     {
         Gate::authorize('staff');
+        abort_unless(static::canAccess(),403);
         $this->nodeId=Node::where('enabled',true)->value('id');
         $this->resetForm();
     }
+    public function hydrate(): void { abort_unless(static::canAccess(),403); }
     public static function getNavigationLabel(): string { return static::LABEL; }
     public function getTitle(): string { return static::LABEL; }
     public function section(): string { return static::SECTION; }
@@ -60,6 +62,7 @@ abstract class Management extends Page
     }
     protected function getViewData(): array
     {
+        abort_unless(static::canAccess(),403);
         return ['records'=>$this->records(),'nodes'=>Node::get(),'customers'=>Customer::orderBy('name')->get(),'plans'=>Plan::where('active',true)->get()];
     }
     public function editRecord(int $id): void

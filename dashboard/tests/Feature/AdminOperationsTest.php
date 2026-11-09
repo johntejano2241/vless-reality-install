@@ -48,6 +48,10 @@ class AdminOperationsTest extends TestCase
         Livewire::actingAs($this->user('support'))->test(Customers::class)->set('form.name','Unauthorized')->call('saveRecord')->assertForbidden();
         $this->assertDatabaseCount('customers',0);
     }
+    public function test_support_cannot_mount_the_staff_screen_directly(): void
+    {
+        Livewire::actingAs($this->user('support'))->test(Staff::class)->assertForbidden();
+    }
     public function test_last_owner_cannot_disable_itself_and_password_never_enters_audit(): void
     {
         $owner=$this->user();
