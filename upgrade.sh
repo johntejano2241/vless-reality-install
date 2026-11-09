@@ -15,6 +15,11 @@ for installed_file in /etc/reality-vless/config.json /etc/reality-vless/server.j
   [[ -f $installed_file ]] || { echo "Existing installation missing: $installed_file" >&2; exit 1; }
 done
 /usr/bin/python3 "$base/realityctl.py" check-core /usr/local/bin/xray-reality
+if [[ ${INSTALL_ADMIN_DASHBOARD:-1} == 1 ]]; then
+  for source_file in install-admin.sh admin_agent.py dashboard/composer.lock dashboard/deploy/compose.yaml; do
+    [[ -f "$base/$source_file" ]] || { echo "Missing dashboard source: $source_file" >&2; exit 1; }
+  done
+fi
 exec 9>>/run/lock/reality-installer.lock
 flock -n 9 || { echo 'Another installation or upgrade is running.' >&2; exit 1; }
 # Validate source without creating pycache beside the checked-out project.
@@ -65,6 +70,13 @@ if ! bash "$base/install-expiry.sh"; then
   echo "Manager updated, but expiry scheduling failed. Fix the error and rerun upgrade.sh. Backup: $backup" >&2
   exit 1
 fi
+if [[ ${INSTALL_ADMIN_DASHBOARD:-1} == 1 ]]; then
+  if ! bash "$base/install-admin.sh"; then
+    echo "VPN manager updated, but admin setup failed. Inspect the error and rerun install-admin.sh. Backup: $backup" >&2
+    exit 1
+  fi
+fi
 printf '\nUpgrade complete. Existing clients and connection links preserved.\n'
 printf 'Backup: %s\nOpen the menu: sudo realityctl\n' "$backup"
+
 

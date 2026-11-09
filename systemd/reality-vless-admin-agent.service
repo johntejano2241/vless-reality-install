@@ -1,0 +1,25 @@
+[Unit]
+Description=Private local bridge for Esmi VPN administration
+After=reality-vless.service
+Wants=reality-vless.service
+
+[Service]
+Type=simple
+User=root
+Group=reality-admin
+ExecStart=/usr/bin/python3 /usr/local/lib/reality-vless/admin_agent.py serve
+Restart=on-failure
+RestartSec=3
+RuntimeDirectory=reality-vless-admin
+RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/etc/reality-vless /run/lock /run/reality-vless-admin
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target

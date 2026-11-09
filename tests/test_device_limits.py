@@ -5,6 +5,7 @@ import json
 import os
 from pathlib import Path
 import queue
+import subprocess
 import sys
 import tempfile
 from types import SimpleNamespace
@@ -161,7 +162,7 @@ class DeviceManagerDiskTests(unittest.TestCase):
             m.main(['menu'])
         prompts = [call.args[0] for call in inputs.call_args_list]
         self.assertIn('Expiration days', prompts[2])
-        self.assertIn('Multiple devices', prompts[3])
+        self.assertIn('Public-IP slots', prompts[3])
         record = json.loads(m.REGISTRY.read_text())['clients'][0]
         self.assertEqual(record['device_limit'], 2)
         self.assertEqual(record['expires_at'], m.timestamp(NOW + timedelta(days=7)))
@@ -170,8 +171,102 @@ class DeviceManagerDiskTests(unittest.TestCase):
     def test_cli_devices_option_and_legacy_default(self):
         m.main(['add', 'phone', '--days', '0', '--devices', '1'])
         m.main(['add', 'laptop', '--days', '0'])
+        m.main(['add', 'tablet', '--days', '0', '--ip-limit', '2'])
         records = json.loads(m.REGISTRY.read_text())['clients']
-        self.assertEqual([r['device_limit'] for r in records], [1, 0])
+        self.assertEqual([r['device_limit'] for r in records], [1, 0, 2])
+
+    def test_set_limit_on_existing_unlimited_account_preserves_link_and_expiry(self):
+        m.main(['add', 'phone', '--days', '7'])
+        original = json.loads(m.REGISTRY.read_text())['clients'][0]
+        config = json.loads(m.CONFIG.read_text())
+        meta = json.loads((m.ROOT / 'server.json').read_text())
+        link = m.share_link(config, meta, original)
+        m.main(['set-limit', 'PHONE', '--ips', '1'])
+        updated = json.loads(m.REGISTRY.read_text())['clients'][0]
+        self.assertEqual(updated, dict(original, device_limit=1))
+        self.assertEqual(m.share_link(json.loads(m.CONFIG.read_text()), meta, updated), link)
+        self.assertTrue(any(r.get('user') == ['phone'] and r['outboundTag'] == 'blocked'
+                            for r in json.loads(m.CONFIG.read_text())['routing']['rules']))
+
+    def test_reducing_a_positive_limit_restarts_to_clear_runtime_allowances(self):
+        m.main(['add', 'phone', '--days', '0', '--devices', '2'])
+        original_config = m.CONFIG.read_bytes()
+        with patch.object(m, 'restart_service') as restart:
+            m.main(['set-limit', 'phone', '--ips', '1'])
+        restart.assert_called_once_with()
+        self.assertEqual(m.CONFIG.read_bytes(), original_config)
+        self.assertEqual(json.loads(m.REGISTRY.read_text())['clients'][0]['device_limit'], 1)
+
+    def test_noop_limit_does_not_restart_and_zero_removes_guards(self):
+        m.main(['add', 'phone', '--days', '0', '--devices', '1'])
+        with patch.object(m, 'restart_service') as restart:
+            m.main(['set-limit', 'phone', '--ips', '1'])
+        restart.assert_not_called()
+        m.main(['set-limit', 'phone', '--ips', '0'])
+        self.assertFalse(any(r.get('user') == ['phone']
+                             for r in json.loads(m.CONFIG.read_text())['routing']['rules']))
+
+    def test_expired_account_limit_can_change_without_renewal(self):
+        m.main(['add', 'phone', '--days', '1'])
+        with patch.object(m, 'utcnow', return_value=NOW + timedelta(days=2)):
+            m.main(['set-limit', 'phone', '--ips', '1'])
+        record = json.loads(m.REGISTRY.read_text())['clients'][0]
+        self.assertEqual(record['device_limit'], 1)
+        self.assertEqual(record['expires_at'], m.timestamp(NOW + timedelta(days=1)))
+        self.assertEqual(m.users(json.loads(m.CONFIG.read_text())), [])
+
+    def test_bad_limit_missing_client_and_unavailable_controller_preserve_state(self):
+        m.main(['add', 'phone', '--days', '0'])
+        original = (m.CONFIG.read_bytes(), m.REGISTRY.read_bytes())
+        for name, ips in [('phone', '-1'), ('missing', '1')]:
+            with self.subTest(name=name, ips=ips), self.assertRaises(ValueError):
+                m.main(['set-limit', name, '--ips', ips])
+            self.assertEqual((m.CONFIG.read_bytes(), m.REGISTRY.read_bytes()), original)
+        with patch.object(m.subprocess, 'run', side_effect=subprocess.CalledProcessError(1, 'systemctl')):
+            with self.assertRaisesRegex(ValueError, 'service is unavailable'):
+                m.main(['set-limit', 'phone', '--ips', '1'])
+        self.assertEqual((m.CONFIG.read_bytes(), m.REGISTRY.read_bytes()), original)
+
+    def test_limit_restart_failure_restores_previous_cap(self):
+        m.main(['add', 'phone', '--days', '0', '--devices', '2'])
+        original = (m.CONFIG.read_bytes(), m.REGISTRY.read_bytes())
+        with patch.object(m, 'restart_service', side_effect=[OSError('failed'), None]):
+            with self.assertRaisesRegex(RuntimeError, 'previous client records'):
+                m.main(['set-limit', 'phone', '--ips', '1'])
+        self.assertEqual((m.CONFIG.read_bytes(), m.REGISTRY.read_bytes()), original)
+
+    def test_menu_can_edit_existing_limit(self):
+        m.main(['add', 'phone', '--days', '0'])
+        with patch('builtins.input', side_effect=['6', 'phone', '1', '0']):
+            m.main(['menu'])
+        self.assertEqual(json.loads(m.REGISTRY.read_text())['clients'][0]['device_limit'], 1)
+
+    def test_diagnostics_explain_same_ip_sharing_and_do_not_print_credentials(self):
+        m.main(['add', 'phone', '--days', '0', '--devices', '1'])
+        record = json.loads(m.REGISTRY.read_text())['clients'][0]
+        original = (m.CONFIG.read_bytes(), m.REGISTRY.read_bytes())
+        self.output.truncate(0)
+        self.output.seek(0)
+        with patch.object(limiter, 'online_ips', return_value={'phone': {IP1}}), \
+             patch.object(limiter, 'read_state', return_value=state_for({'clients': [record]}, {IP1: EPOCH})):
+            m.main(['limits', 'PHONE'])
+        output = self.output.getvalue()
+        self.assertIn('same Wi-Fi/hotspot', output)
+        self.assertIn('Public IPs reported by Xray: ' + IP1, output)
+        self.assertIn('Saved admitted IP slots: ' + IP1, output)
+        self.assertNotIn(record['user']['id'], output)
+        self.assertNotIn('vless://', output)
+        self.assertEqual((m.CONFIG.read_bytes(), m.REGISTRY.read_bytes()), original)
+
+    def test_diagnostics_report_unlimited_and_fail_visibly_if_stats_are_unavailable(self):
+        m.main(['add', 'phone', '--days', '0'])
+        with patch.object(limiter, 'online_ips', return_value={}), \
+             patch.object(limiter, 'read_state', return_value={'clients': {}}):
+            m.main(['limits', 'phone'])
+        self.assertIn('This account is unlimited', self.output.getvalue())
+        with patch.object(limiter, 'online_ips', side_effect=ValueError('unavailable')):
+            with self.assertRaisesRegex(ValueError, 'Cannot read IP-limit diagnostics'):
+                m.main(['limits', 'phone'])
 
     def test_expiry_registry_migration_preserves_existing_dates_and_ids(self):
         record = {'name': 'andrea', 'user': {'email': 'andrea', 'id': 'existing-id', 'flow': 'xtls-rprx-vision'}, 'expires_at': m.timestamp(NOW + timedelta(days=3))}
@@ -212,3 +307,4 @@ class DeviceManagerDiskTests(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+

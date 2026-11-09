@@ -4,6 +4,28 @@ Install a dedicated Xray server and manage expiry and per-client public-IP slots
 Supports Ubuntu 22.04 with systemd on x86_64 and ARM64. It can run beside OpenVPN
 using a separate service and an available TCP port.
 
+## Administrator dashboard
+
+Fresh installs and upgrades now include an **admin-only Laravel/Filament dashboard**.
+It provides staff roles with mandatory MFA, VPN users, manual customer records,
+access plans, early extensions, suspension, credential rotation, private servers,
+health/usage views, support records, operation tracking, audit history and encrypted backups.
+Customer sign-in and payment services are excluded.
+
+After the dashboard becomes healthy, installation prints a random **eight-character
+setup key** for first-owner creation at `/setup`. It expires after 30 minutes and
+works only while first setup is unclaimed. Existing administrator credentials
+are preserved on reinstall/upgrade; completed setup stays closed.
+
+The web listener defaults to **127.0.0.1:8080**. Open an SSH tunnel from your computer
+and use the printed setup URL. See the complete [dashboard installation, first-admin setup,
+HTTPS, roles, private server connections and recovery guide](docs/ADMIN_DASHBOARD.md).
+The installer deploys the web app with Docker Compose and keeps host management
+behind a private Unix socket. It does not expose a root shell to the web process.
+
+For an explicitly CLI-only installation, set `INSTALL_ADMIN_DASHBOARD=0` when
+running `install.sh` or `upgrade.sh`.
+
 Choose the guide for your server:
 
 | Your situation | Guide | Script |
@@ -81,7 +103,7 @@ sudo realityctl
 
 The service check should print `active` for each of the three units. There are
 initially zero authorized clients. In the menu, choose **1. Add client**, enter a
-unique name, then choose expiration days and the device/public-IP slot limit.
+unique name, then choose expiration days and the public-IP slot limit.
 See [Client menu](#client-menu) for the meaning of each value.
 
 Import the generated `vless://` link into a client supporting VLESS + REALITY +
@@ -193,11 +215,13 @@ sudo realityctl
 
 The menu provides:
 
-1. **Add client** — enter a unique name, expiration days, then the device/IP-slot limit.
+1. **Add client** — enter a unique name, expiration days, then the public-IP slot limit.
 2. **Renew expired client** — retain the name and connection link, and choose a new expiry.
 3. **Find client** — show its name, status, expiry date, and connection link.
 4. **Show all clients** — show names, active/expired status, expiry dates, and IP-slot limits.
 5. **Remove client** — permanently remove a record and disable its access.
+6. **Set public-IP limit** — change an existing account's cap, keeping its link and expiry.
+7. **Check public-IP slots** — show the cap, online public IPs and saved admissions.
 
 Enter **0** to exit.
 
@@ -207,7 +231,8 @@ For Add and Renew:
 - **1 or more** means that many 24-hour days from the Add or Renew operation.
 - Negative values, fractions, and non-numeric values produce an error.
 
-For Add, the next prompt is **Multiple devices / public-IP slots**:
+For Add, the next prompt is **Public-IP slots**. The same prompt appears in
+**Set public-IP limit**:
 
 - **0** means no limit.
 - **1 or more** sets the allowed number of simultaneous source IPs for that client.
@@ -218,7 +243,7 @@ The order is:
 ```text
 Client name
 Expiration days (0 = no expiry, 1 or more = days)
-Multiple devices / public-IP slots (0 = no limit, 1 or more = limit)
+Public-IP slots (0 = no limit, 1 or more = limit)
 ```
 
 ### How IP slots work
@@ -228,6 +253,50 @@ server**, rather than physical devices. Several phones on the same Wi-Fi or
 carrier NAT can share one slot. A phone switching between Wi-Fi and mobile data
 may appear as a different IP. A physical-device limit cannot be reliably enforced
 from a shared VLESS link.
+
+### Two Android phones in Happ both work with a one-slot cap
+
+If both phones use the same Wi-Fi or hotspot, they normally reach the server
+through the same public IP. Both can browse with a one-slot cap; this is an
+IP-based design limitation. The script now labels the setting as **Public-IP
+slots** throughout the menu. The legacy `--devices` argument and `device_limit`
+registry field remain compatible, with the same public-IP meaning.
+
+To check an existing account after updating the server:
+
+```bash
+sudo realityctl list
+sudo realityctl set-limit phone --ips 1
+sudo realityctl limits phone
+```
+
+Replace `phone` with the existing client name. Older migrated accounts default
+to **Unlimited** until you explicitly set a cap. Setting a cap preserves the
+UUID, existing Happ link and expiry. An actual cap change restarts Xray to clear
+previous in-memory allow rules, so connected clients briefly reconnect. Setting
+the same cap again leaves Xray running. Use `--ips 0` to make an account unlimited.
+
+For a meaningful enforcement test, keep one phone browsing through the VPN on
+Wi-Fi and put the other on mobile data with Wi-Fi disabled. The server must see
+**different public IPs**; two SIMs can also share a carrier NAT address. The first
+IP occupies the slot; browsing through the same account from the other IP should
+fail while that slot is occupied. Happ's **Connected** indicator alone does not
+prove traffic is allowed: the VPN interface can remain connected while the
+server denies forwarded requests. Make sure the test traffic actually uses the VPN.
+
+`limits` shows online IP statistics and saved slot state without printing a UUID
+or connection link. Online statistics can briefly include denied attempts, and
+saved admissions can lag a restart or the controller's reconciliation. An
+unavailable controller or statistics API produces an error rather than an empty
+success report.
+
+Enforcing a physical-phone cap even on shared Wi-Fi requires a different design
+with device enrollment and client authentication bound to that device. A copied
+plain `vless://` link does not provide that identity. This update does not claim
+to add physical-device binding, and counting TCP connections or source ports
+would also cap ordinary parallel connections from a single phone.
+
+### Admission and release
 
 For limited clients, new source IPs are initially denied and admitted through a
 private local controller when capacity is available. The first request may fail
@@ -287,10 +356,25 @@ records and are retried by later sweeps.
 # Add a client without expiry, or with 30 days of access
 sudo realityctl add phone --days 0 --devices 0
 sudo realityctl add laptop --days 30 --devices 2
+# Preferred spelling for new commands; --devices remains an alias
+sudo realityctl add tablet --days 30 --ip-limit 1
+
+# Change an existing account's public-IP cap and inspect runtime observations
+sudo realityctl set-limit phone --ips 1
+sudo realityctl limits phone
+# Remove its cap (keep the same account and connection link)
+sudo realityctl set-limit phone --ips 0
 
 # Renew an expired client for 7 days, or permanently
 sudo realityctl renew laptop --days 7
 sudo realityctl renew phone --days 0
+
+# Extend active/expired access without changing its link; suspension stays in effect
+sudo realityctl extend laptop --days 30
+sudo realityctl suspend laptop
+sudo realityctl resume laptop
+# Rotate a compromised credential; the old link stops working
+sudo realityctl rotate laptop
 
 # Find one client or list every retained record
 sudo realityctl find phone
@@ -305,7 +389,7 @@ sudo realityctl expire
 ```
 
 Add and Renew prompt for days when omitted in an interactive terminal. Add then
-prompts for the device/IP-slot limit. Automated commands must supply `--days`;
+prompts for the public-IP slot limit. Automated commands must supply `--days`;
 `--devices` defaults to `0` when omitted non-interactively, preserving older
 automation. Legacy command names remain available:
 `show NAME` aliases `find NAME`, and `revoke NAME` aliases `remove NAME`.
@@ -353,6 +437,7 @@ keys are shared at the server level.
 
 ```bash
 sudo realityctl list
+sudo realityctl limits phone  # replace phone with an existing client name
 sudo systemctl status reality-vless --no-pager
 sudo systemctl status reality-vless-expire.timer --no-pager
 sudo systemctl status reality-vless-limits --no-pager
@@ -377,7 +462,8 @@ upgrade and renewal on a disposable Ubuntu 22.04 runner with real systemd
 services. It also exercises real VLESS + REALITY connections from different
 source addresses: one-slot admission, same-IP sharing, excess-IP refusal,
 independent unlimited accounts, uninterrupted admitted streams, and reuse after
-disconnect. The CI smoke scripts refuse execution outside a disposable Actions
+disconnect. It also changes an existing unlimited account to a limited account
+and checks that reducing a cap clears earlier allowances. The CI smoke scripts refuse execution outside a disposable Actions
 runner. CI does not establish connectivity from every phone or censored network.
 
 ## Upstream references
@@ -385,4 +471,5 @@ runner. CI does not establish connectivity from every phone or censored network.
 - https://github.com/XTLS/Xray-core
 - https://xtls.github.io/en/config/inbounds/vless.html
 - https://xtls.github.io/en/config/transports/reality.html
+
 

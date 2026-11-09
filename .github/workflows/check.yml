@@ -9,9 +9,9 @@ jobs:
       - uses: actions/checkout@v4
       - name: Syntax and lifecycle tests
         run: |
-          bash -n install.sh upgrade.sh install-expiry.sh install-ip-limits.sh tests/smoke_upgrade.sh
+          bash -n install.sh upgrade.sh install-expiry.sh install-ip-limits.sh install-admin.sh tests/smoke_upgrade.sh tests/smoke_admin.sh
           python3 -m unittest discover -s tests -v
-          shellcheck install.sh upgrade.sh install-expiry.sh install-ip-limits.sh tests/smoke_upgrade.sh
+          shellcheck install.sh upgrade.sh install-expiry.sh install-ip-limits.sh install-admin.sh tests/smoke_upgrade.sh tests/smoke_admin.sh
       - name: Download verified Xray release
         run: |
           set -euo pipefail
@@ -36,4 +36,5 @@ jobs:
         run: |
           sudo journalctl -u reality-vless-limits --no-pager -n 80
           sudo journalctl -u reality-vless -u reality-vless-expire --no-pager -n 40
+
 

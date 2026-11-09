@@ -1,0 +1,14 @@
+[Unit]
+Description=Encrypted backup of Esmi VPN and admin data
+
+[Service]
+Type=oneshot
+User=root
+Group=root
+ExecStart=/usr/bin/python3 /usr/local/lib/reality-vless/admin_agent.py backup
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/backups/reality-vless-admin /etc/reality-vless-admin /run/lock

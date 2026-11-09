@@ -11,6 +11,11 @@ for source_file in realityctl.py ip_limiter.py install-ip-limits.sh install-expi
   [[ -f "$base/$source_file" ]] || { echo 'Extract the complete project first.' >&2; exit 1; }
 done
 exec 9>>/run/lock/reality-installer.lock
+if [[ ${INSTALL_ADMIN_DASHBOARD:-1} == 1 ]]; then
+  for source_file in install-admin.sh admin_agent.py dashboard/composer.lock dashboard/deploy/compose.yaml; do
+    [[ -f "$base/$source_file" ]] || { echo 'Extract the complete project, including the admin dashboard.' >&2; exit 1; }
+  done
+fi
 flock -n 9 || { echo 'Another installation is running.' >&2; exit 1; }
 for path in /etc/reality-vless /usr/local/lib/reality-vless /usr/local/bin/realityctl /usr/local/bin/xray-reality /etc/systemd/system/reality-vless.service /etc/systemd/system/reality-vless-expire.service /etc/systemd/system/reality-vless-expire.timer; do
   [[ ! -e $path ]] || { echo "Refusing to overwrite $path. Use upgrade.sh for an existing installation." >&2; exit 1; }
@@ -95,8 +100,12 @@ systemctl enable --now reality-vless
 systemctl is-active --quiet reality-vless
 bash "$base/install-ip-limits.sh"
 bash "$base/install-expiry.sh"
+if [[ ${INSTALL_ADMIN_DASHBOARD:-1} == 1 ]]; then
+  bash "$base/install-admin.sh"
+fi
 printf '\nInstalled. No clients exist yet. Open the menu: sudo realityctl\n'
 printf 'Allow inbound TCP %s in your host AND provider firewalls. Existing firewall/SSH rules were preserved.\n' "$port"
 printf 'Release: %s\n' "$(jq -r .tag_name "$tmp/release.json")"
+
 
 

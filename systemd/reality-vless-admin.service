@@ -1,0 +1,14 @@
+[Unit]
+Description=Esmi VPN admin-only dashboard
+After=docker.service reality-vless-admin-agent.service
+Requires=docker.service
+Wants=reality-vless-admin-agent.service
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/opt/reality-vless-admin
+ExecStart=/usr/bin/docker compose --env-file /etc/reality-vless-admin/compose.env -f /opt/reality-vless-admin/deploy/compose.yaml up -d
+ExecStop=/usr/bin/docker compose --env-file /etc/reality-vless-admin/compose.env -f /opt/reality-vless-admin/deploy/compose.yaml stop
+TimeoutStartSec=180
+[Install]
+WantedBy=multi-user.target
