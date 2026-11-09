@@ -95,8 +95,12 @@ systemctl enable --now reality-vless
 systemctl is-active --quiet reality-vless
 bash "$base/install-ip-limits.sh"
 bash "$base/install-expiry.sh"
+if [[ ${INSTALL_ADMIN_DASHBOARD:-1} == 1 ]]; then
+  bash "$base/install-admin.sh"
+fi
 printf '\nInstalled. No clients exist yet. Open the menu: sudo realityctl\n'
 printf 'Allow inbound TCP %s in your host AND provider firewalls. Existing firewall/SSH rules were preserved.\n' "$port"
 printf 'Release: %s\n' "$(jq -r .tag_name "$tmp/release.json")"
+
 
 

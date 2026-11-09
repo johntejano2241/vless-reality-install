@@ -65,6 +65,13 @@ if ! bash "$base/install-expiry.sh"; then
   echo "Manager updated, but expiry scheduling failed. Fix the error and rerun upgrade.sh. Backup: $backup" >&2
   exit 1
 fi
+if [[ ${INSTALL_ADMIN_DASHBOARD:-1} == 1 ]]; then
+  if ! bash "$base/install-admin.sh"; then
+    echo "VPN manager updated, but admin setup failed. Inspect the error and rerun install-admin.sh. Backup: $backup" >&2
+    exit 1
+  fi
+fi
 printf '\nUpgrade complete. Existing clients and connection links preserved.\n'
 printf 'Backup: %s\nOpen the menu: sudo realityctl\n' "$backup"
+
 

@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 # CI-only: builds a legacy installation on a disposable Ubuntu runner.
 set -Eeuo pipefail
+# This suite checks the native manager separately; the admin workflow tests the web stack.
+export INSTALL_ADMIN_DASHBOARD=0
 umask 077
 [[ $EUID -eq 0 && ${GITHUB_ACTIONS:-false} == true ]] || { echo 'Run only as root on a disposable GitHub Actions runner.' >&2; exit 1; }
 binary=${1:?Pass the verified Xray binary path}
@@ -108,4 +110,5 @@ records = json.loads(pathlib.Path('/etc/reality-vless/clients.json').read_text()
 assert [r['name'] for r in records] == ['andrea']
 PY
 echo 'Upgrade, migration, expiry, retained-link renewal, menu, and removal smoke checks passed.'
+
 

@@ -8,6 +8,9 @@ base=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
   echo 'Install/upgrade the VPN first and use a complete release with composer.lock.' >&2; exit 1;
 }
 port=${ADMIN_PORT:-8080}
+if [[ -f /etc/reality-vless-admin/compose.env ]]; then
+  port=$(python3 -c 'from pathlib import Path; print(dict(line.split("=",1) for line in Path("/etc/reality-vless-admin/compose.env").read_text().splitlines() if "=" in line)["ADMIN_PORT"])')
+fi
 [[ $port =~ ^[0-9]+$ && ${#port} -le 5 ]] || { echo 'Invalid ADMIN_PORT.' >&2; exit 1; }
 ((10#$port > 1023 && 10#$port <= 65535)) || { echo 'ADMIN_PORT must be between 1024 and 65535.' >&2; exit 1; }
 admin_url=${ADMIN_URL:-http://localhost:$port}
@@ -80,8 +83,9 @@ systemctl start reality-vless-admin
 systemctl enable --now reality-vless-admin-backup.timer
 systemctl start reality-vless-admin-backup
 ready=false
+web_host=$(python3 -c 'from pathlib import Path; from urllib.parse import urlsplit; values=dict(line.split("=",1) for line in Path("/etc/reality-vless-admin/app.env").read_text().splitlines() if "=" in line); print(urlsplit(values["APP_URL"]).netloc)')
 for attempt in {1..15}; do
-  if curl -fsS --max-time 5 "http://127.0.0.1:$port/up" >/dev/null; then ready=true; break; fi
+  if curl -fsS --max-time 5 -H "Host: $web_host" "http://127.0.0.1:$port/up" >/dev/null; then ready=true; break; fi
   sleep 2
 done
 [[ $ready == true ]] || { echo 'Dashboard health check failed. Inspect Docker logs before issuing a setup key.' >&2; exit 1; }

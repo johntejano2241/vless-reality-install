@@ -1,7 +1,7 @@
 [Unit]
 Description=Private local bridge for Esmi VPN administration
 After=reality-vless.service
-Requires=reality-vless.service
+Wants=reality-vless.service
 
 [Service]
 Type=simple
@@ -12,6 +12,7 @@ Restart=on-failure
 RestartSec=3
 RuntimeDirectory=reality-vless-admin
 RuntimeDirectoryMode=0750
+RuntimeDirectoryPreserve=yes
 UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true

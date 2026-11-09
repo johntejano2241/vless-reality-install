@@ -17,9 +17,14 @@ jobs:
           tools: composer:v2
           coverage: none
       - name: Install application dependencies
-        run: composer install --no-interaction --prefer-dist
+        run: |
+          mkdir -p storage/framework/cache/data storage/framework/sessions storage/framework/views storage/logs storage/app/private bootstrap/cache
+          composer install --no-interaction --prefer-dist
       - name: Test first-admin setup and administrator permissions
-        run: vendor/bin/phpunit
+        run: php -d log_errors=1 -d error_log=/tmp/esmi-php.log vendor/bin/phpunit --debug
+      - name: Show PHP diagnostics on failure
+        if: failure()
+        run: cat /tmp/esmi-php.log || true
       - name: Compile administrator views and assets
         env:
           APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
@@ -29,6 +34,7 @@ jobs:
           php artisan route:list --except-vendor
           composer audit
       - uses: actions/upload-artifact@v4
+        if: always()
         with:
           name: admin-composer-lock
           path: dashboard/composer.lock

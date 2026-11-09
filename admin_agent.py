@@ -16,6 +16,7 @@ import sqlite3
 import struct
 import subprocess
 import tarfile
+import tempfile
 import time
 import uuid
 
@@ -132,12 +133,11 @@ def backup():
             archive.add(WEB_ENV, arcname='web-app.env', recursive=False)
         database = WEB_DATA / 'database' / 'database.sqlite'
         if database.exists():
-            with contextlib.closing(sqlite3.connect(database)) as source, contextlib.closing(sqlite3.connect(':memory:')) as copy:
-                source.backup(copy)
-                sql = '\n'.join(copy.iterdump()).encode()
-            info = tarfile.TarInfo('dashboard.sql')
-            info.size = len(sql)
-            archive.addfile(info, io.BytesIO(sql))
+            with tempfile.TemporaryDirectory() as temporary:
+                consistent = Path(temporary) / 'dashboard.sqlite'
+                with contextlib.closing(sqlite3.connect('file:' + str(database) + '?mode=ro', uri=True)) as source, contextlib.closing(sqlite3.connect(consistent)) as copy:
+                    source.backup(copy)
+                archive.add(consistent, arcname='dashboard.sqlite', recursive=False)
     target = BACKUPS / (time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '-' + secrets.token_hex(4) + '.fernet')
     fd = os.open(target, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
     with os.fdopen(fd, 'wb') as handle:

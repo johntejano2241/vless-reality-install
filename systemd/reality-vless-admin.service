@@ -1,7 +1,8 @@
 [Unit]
 Description=Esmi VPN admin-only dashboard
 After=docker.service reality-vless-admin-agent.service
-Requires=docker.service reality-vless-admin-agent.service
+Requires=docker.service
+Wants=reality-vless-admin-agent.service
 [Service]
 Type=oneshot
 RemainAfterExit=yes

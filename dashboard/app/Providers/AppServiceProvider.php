@@ -10,6 +10,7 @@ class AppServiceProvider extends ServiceProvider
     public function boot(): void
     {
         Gate::define('owner',fn(User $user)=>$user->active && $user->role==='owner');
+        if (str_starts_with(config('app.url'),'https://')) \Illuminate\Support\Facades\URL::forceScheme('https');
         Gate::define('manage-vpn',fn(User $user)=>$user->active && in_array($user->role,['owner','operator'],true));
         Gate::define('staff',fn(User $user)=>$user->active && in_array($user->role,['owner','operator','support'],true));
         RateLimiter::for('setup',fn($request)=>Limit::perMinutes(15,5)->by('setup:'.$request->ip()));
