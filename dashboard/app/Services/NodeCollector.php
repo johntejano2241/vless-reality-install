@@ -33,7 +33,11 @@ class NodeCollector
                         $same=$client->counter_epoch === $data['epoch'];
                         $client->upload_bytes=($client->upload_bytes??0)+max(0,$up-($same?$client->last_upload:0));
                         $client->download_bytes=($client->download_bytes??0)+max(0,$down-($same?$client->last_download:0));
-                        $client->last_upload=$up; $client->last_download=$down; $client->counter_epoch=$data['epoch'];
+                        // An older/lower sample in the same epoch must not lower the
+                        // high-water mark and count those bytes again next poll.
+                        $client->last_upload=$same?max($up,$client->last_upload):$up;
+                        $client->last_download=$same?max($down,$client->last_download):$down;
+                        $client->counter_epoch=$data['epoch'];
                     }
                     $client->save();
                 }

@@ -88,7 +88,12 @@ for _attempt in {1..15}; do
   if curl -fsS --max-time 5 -H "Host: $web_host" "http://127.0.0.1:$port/up" >/dev/null; then ready=true; break; fi
   sleep 2
 done
-[[ $ready == true ]] || { echo 'Dashboard health check failed. Inspect Docker logs before issuing a setup key.' >&2; exit 1; }
+if [[ $ready != true ]]; then
+  echo 'Dashboard health check failed; a setup key has not been issued.' >&2
+  "${compose[@]}" ps -a >&2
+  "${compose[@]}" logs --tail=40 web app >&2
+  exit 1
+fi
 printf '\nAdmin dashboard installation complete. It listens only on 127.0.0.1:%s.\n' "$port"
 printf 'For first setup, open an SSH tunnel: ssh -L %s:127.0.0.1:%s USER@SERVER\n' "$port" "$port"
 # The raw eight-character key is emitted only after the web stack is ready.

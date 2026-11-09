@@ -7,7 +7,7 @@ use App\Services\{AgentClient,NodeCollector,VpnCommands};
 use Filament\Facades\Filament;
 use Illuminate\Auth\Access\AuthorizationException;
 use Illuminate\Foundation\Testing\RefreshDatabase;
-use Illuminate\Support\Facades\{Queue,Hash};
+use Illuminate\Support\Facades\{Queue,Hash,Gate};
 use Livewire\Livewire;
 use Mockery;
 use Tests\TestCase;
@@ -76,6 +76,14 @@ class AdminOperationsTest extends TestCase
         (new ApplyVpnCommand($command->id))->handle($agent);
         $this->assertSame('failed',$command->fresh()->state);
     }
+    public function test_an_already_authenticated_staff_session_loses_permission_after_demotion(): void
+    {
+        $owner=$this->user(); $this->actingAs($owner);
+        $this->assertTrue(Gate::allows('owner'));
+        User::whereKey($owner->id)->update(['role'=>'support']);
+        $this->assertFalse(Gate::allows('owner'));
+        $this->assertFalse(Gate::allows('manage-vpn'));
+    }
     public function test_usage_polling_deduplicates_counters_and_accounts_for_restart(): void
     {
         $agent=Mockery::mock(AgentClient::class);
@@ -84,6 +92,15 @@ class AdminOperationsTest extends TestCase
         $collector=app(NodeCollector::class);
         $collector->refresh(Node::first()); $collector->refresh(Node::first()); $collector->refresh(Node::first());
         $client=VpnClient::first(); $this->assertSame(120,$client->upload_bytes); $this->assertSame(100,$client->download_bytes);
+    }
+    public function test_delayed_lower_counter_sample_does_not_charge_the_same_bytes_twice(): void
+    {
+        $agent=Mockery::mock(AgentClient::class);
+        $agent->shouldReceive('request')->andReturn($this->snapshot(100),$this->snapshot(60),$this->snapshot(120));
+        $this->app->instance(AgentClient::class,$agent);
+        for ($i=0;$i<3;$i++) app(NodeCollector::class)->refresh(Node::first());
+        $this->assertSame(120,VpnClient::first()->upload_bytes);
+        $this->assertSame(50,VpnClient::first()->download_bytes);
     }
     public function test_node_failure_keeps_cached_clients_and_marks_data_unavailable(): void
     {
