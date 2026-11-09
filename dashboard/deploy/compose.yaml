@@ -38,7 +38,13 @@ services:
     tmpfs: [/tmp]
     restart: unless-stopped
     depends_on: [app]
-    networks: [admin]
+    # Docker publishes ports through a non-internal gateway network. Only the
+    # Nginx proxy joins it; PHP/queue/scheduler retain outbound isolation.
+    networks: [admin, entrance]
 networks:
   admin:
     internal: true
+  entrance:
+    driver: bridge
+    driver_opts:
+      com.docker.network.bridge.host_binding_ipv4: "127.0.0.1"
