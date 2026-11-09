@@ -10,6 +10,7 @@ RUN mkdir -p storage/framework/cache/data storage/framework/sessions storage/fra
     && php artisan filament:assets \
     && chmod -R a=rX /app
 ENV APP_ENV=production APP_DEBUG=false
+RUN printf '[www]\npm=ondemand\npm.max_children=3\npm.process_idle_timeout=10s\nphp_admin_value[memory_limit]=256M\n' > /usr/local/etc/php-fpm.d/zzz-esmi.conf
 CMD ["php-fpm", "-F"]
 
 FROM nginxinc/nginx-unprivileged:stable-alpine AS web

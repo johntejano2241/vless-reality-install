@@ -12,6 +12,7 @@ use Illuminate\Foundation\Auth\User as Authenticatable;
 class User extends Authenticatable implements FilamentUser, HasAppAuthentication, HasAppAuthenticationRecovery
 {
     use InteractsWithAppAuthentication, InteractsWithAppAuthenticationRecovery;
+    use \Illuminate\Notifications\Notifiable;
     protected $fillable = ['name','email','password','role','active'];
     protected $hidden = ['password','remember_token'];
     protected function casts(): array { return ['password'=>'hashed','active'=>'boolean']; }

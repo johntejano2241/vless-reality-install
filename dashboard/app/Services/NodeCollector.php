@@ -1,6 +1,7 @@
 <?php
 namespace App\Services;
-use App\Models\{Node,VpnClient};
+use App\Models\{Node,User,VpnClient};
+use Filament\Notifications\Notification;
 use Illuminate\Support\Facades\{DB,Validator};
 
 class NodeCollector
@@ -34,12 +35,17 @@ class NodeCollector
                     $client->save();
                 }
                 VpnClient::where('node_id',$node->id)->whereNotIn('name',$names)->delete();
-                $node->update(['health'=>['services'=>$data['services'],'statistics_error'=>$data['statistics_error']],
+                $healthy=!$data['statistics_error'] && !array_filter($data['services'],fn($state)=>$state!=='active');
+                $wasHealthy=$node->health['healthy']??true;
+                $node->update(['health'=>['services'=>$data['services'],'statistics_error'=>$data['statistics_error'],'healthy'=>$healthy],
                     'observed_at'=>now(),'error'=>null]);
+                if ($wasHealthy && !$healthy) Notification::make()->title('VPN server needs attention')->body($node->name.' has an unhealthy service or unavailable statistics.')->danger()->sendToDatabase(User::where('active',true)->where('role','owner')->get());
             });
         } catch (\Throwable $error) {
             // Never retain raw response bodies, profiles, credentials or request payloads.
+            $alreadyFailed=(bool)$node->error;
             $node->update(['error'=>'Node refresh failed. Inspect the private agent and connectivity.']);
+            if (!$alreadyFailed) Notification::make()->title('VPN server unreachable')->body($node->name.' could not be refreshed.')->danger()->sendToDatabase(User::where('active',true)->where('role','owner')->get());
             throw new \RuntimeException('Node refresh failed.', previous: $error);
         }
     }

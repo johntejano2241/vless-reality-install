@@ -35,5 +35,7 @@ class ApplyVpnCommand implements ShouldQueue
     {
         ProvisioningCommand::whereKey($this->commandId)->where('state','!=','succeeded')
             ->update(['state'=>'failed','error'=>'VPN manager unavailable. Inspect the node, then submit a fresh operation.']);
+        \Filament\Notifications\Notification::make()->title('VPN operation failed')->body('Review Operations and the selected server.')->danger()
+            ->sendToDatabase(User::where('active',true)->where('role','owner')->get());
     }
 }
