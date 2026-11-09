@@ -69,6 +69,15 @@ jobs:
       - name: Test full dashboard installation and private provisioning
         working-directory: .
         run: sudo env GITHUB_ACTIONS=true bash tests/smoke_admin.sh
+      - name: Show deployment diagnostics on failure
+        if: failure()
+        working-directory: .
+        run: |
+          if [ -f /etc/reality-vless-admin/compose.env ]; then
+            sudo docker compose --env-file /etc/reality-vless-admin/compose.env -f /opt/reality-vless-admin/deploy/compose.yaml ps -a
+            sudo docker compose --env-file /etc/reality-vless-admin/compose.env -f /opt/reality-vless-admin/deploy/compose.yaml logs --tail=60 app web worker scheduler
+            sudo systemctl status reality-vless-admin-agent --no-pager || true
+          fi
       - name: Browser acceptance
         working-directory: .
         run: |

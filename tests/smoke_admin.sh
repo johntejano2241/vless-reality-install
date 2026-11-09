@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 # CI-only end-to-end installation; never run against an existing admin instance.
+# shellcheck disable=SC2016
 set -Eeuo pipefail
 umask 077
 [[ $EUID -eq 0 && ${GITHUB_ACTIONS:-false} == true && -f /tmp/reality-legacy-config.json ]] || {
@@ -26,6 +27,9 @@ assert keys[0] not in page, 'Setup key leaked through HTML'
 token=html.unescape(re.search(r'name="_token" value="([^"]+)"',page).group(1))
 body=urllib.parse.urlencode({'_token':token,'setup_key':keys[0],'name':'CI Owner','email':'owner@example.test',
     'password':'Strong!Owner12345','password_confirmation':'Strong!Owner12345'}).encode()
+bad_body=body.replace(urllib.parse.quote(token).encode(),b'invalid-csrf-token')
+try: opener.open(urllib.request.Request(base+'/setup',data=bad_body,headers={'Origin':base})); raise AssertionError('Invalid CSRF token was accepted')
+except urllib.error.HTTPError as error: assert error.code==419
 response=opener.open(urllib.request.Request(base+'/setup',data=body,headers={'Origin':base,'Referer':base+'/setup'}))
 assert '/admin/login' in response.url, 'First-admin creation did not redirect to login'
 try: opener.open(base+'/setup'); raise AssertionError('Setup stayed open')

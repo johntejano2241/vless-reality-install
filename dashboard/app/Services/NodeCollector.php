@@ -16,6 +16,9 @@ class NodeCollector
                 'clients.*.name'=>['required','regex:/^[A-Za-z0-9][A-Za-z0-9_-]{0,47}$/D'],
                 'clients.*.status'=>'required|in:active,expired,suspended','clients.*.expires_at'=>'nullable|date',
                 'clients.*.ip_limit'=>'required|integer|min:0','clients.*.version'=>'required|string|size:64',
+                'resources'=>'nullable|array','resources.load_1m'=>'nullable|numeric|min:0',
+                'resources.memory_used'=>'nullable|integer|min:0','resources.memory_total'=>'nullable|integer|min:0',
+                'resources.disk_used'=>'nullable|integer|min:0','resources.disk_total'=>'nullable|integer|min:0',
             ])->validate();
             DB::transaction(function () use ($node,$data) {
                 $names=[];
