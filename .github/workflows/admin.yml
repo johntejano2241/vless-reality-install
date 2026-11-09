@@ -51,3 +51,31 @@ jobs:
           path: dashboard/composer.lock
       - name: Validate container deployment
         run: docker build --target web -f deploy/Dockerfile -t esmi-admin-ci .
+      - name: Prepare disposable VPN integration fixture
+        working-directory: .
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y python3-cryptography
+          curl -fsSL https://api.github.com/repos/XTLS/Xray-core/releases/latest -o /tmp/esmi-release.json
+          url=$(jq -er '.assets[] | select(.name=="Xray-linux-64.zip") | .browser_download_url' /tmp/esmi-release.json)
+          digest=$(jq -er '.assets[] | select(.name=="Xray-linux-64.zip") | .digest' /tmp/esmi-release.json)
+          [[ $digest =~ ^sha256:[a-f0-9]{64}$ ]]
+          curl -fsSL "$url" -o /tmp/esmi-xray.zip
+          printf '%s  /tmp/esmi-xray.zip\n' "${digest#sha256:}" | sha256sum -c -
+          unzip -p /tmp/esmi-xray.zip xray > /tmp/esmi-xray
+          chmod +x /tmp/esmi-xray
+          sudo env GITHUB_ACTIONS=true bash tests/smoke_upgrade.sh /tmp/esmi-xray
+      - name: Test full dashboard installation and private provisioning
+        working-directory: .
+        run: sudo env GITHUB_ACTIONS=true bash tests/smoke_admin.sh
+      - name: Browser acceptance
+        working-directory: .
+        run: |
+          npm install --prefix /tmp/esmi-browser --ignore-scripts playwright
+          /tmp/esmi-browser/node_modules/.bin/playwright install --with-deps chromium
+          NODE_PATH=/tmp/esmi-browser/node_modules node tests/browser_admin.cjs
+      - uses: actions/upload-artifact@v4
+        with:
+          name: admin-browser-previews
+          path: /tmp/esmi-browser-shots/*.png

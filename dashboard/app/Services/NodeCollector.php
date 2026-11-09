@@ -35,9 +35,11 @@ class NodeCollector
                     $client->save();
                 }
                 VpnClient::where('node_id',$node->id)->whereNotIn('name',$names)->delete();
-                $healthy=!$data['statistics_error'] && !array_filter($data['services'],fn($state)=>$state!=='active');
+                $resources=$data['resources']??null;
+                $lowDisk=$resources && ($resources['disk_total']??0)>0 && $resources['disk_used']/$resources['disk_total']>=.9;
+                $healthy=!$data['statistics_error'] && !array_filter($data['services'],fn($state)=>$state!=='active') && !$lowDisk;
                 $wasHealthy=$node->health['healthy']??true;
-                $node->update(['health'=>['services'=>$data['services'],'statistics_error'=>$data['statistics_error'],'healthy'=>$healthy],
+                $node->update(['health'=>['services'=>$data['services'],'statistics_error'=>$data['statistics_error'],'healthy'=>$healthy,'resources'=>$resources],
                     'observed_at'=>now(),'error'=>null]);
                 if ($wasHealthy && !$healthy) Notification::make()->title('VPN server needs attention')->body($node->name.' has an unhealthy service or unavailable statistics.')->danger()->sendToDatabase(User::where('active',true)->where('role','owner')->get());
             });

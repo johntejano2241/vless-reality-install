@@ -10,6 +10,7 @@ import os
 from pathlib import Path
 import pwd
 import secrets
+import shutil
 import socket
 import socketserver
 import sqlite3
@@ -95,6 +96,14 @@ def snapshot():
                                 capture_output=True, text=True, check=True, timeout=8).stdout.strip()
     data = {'clients': clients, 'services': services, 'observed_at': manager.timestamp(manager.utcnow()),
             'epoch': invocation, 'online_ips': None, 'traffic': None, 'statistics_error': False}
+    try:
+        memory = {key: int(value.split()[0]) * 1024 for key, value in
+                  (line.split(':', 1) for line in Path('/proc/meminfo').read_text().splitlines())}
+        disk = shutil.disk_usage(manager.ROOT)
+        data['resources'] = {'load_1m': os.getloadavg()[0], 'memory_total': memory['MemTotal'],
+            'memory_used': memory['MemTotal'] - memory['MemAvailable'], 'disk_total': disk.total, 'disk_used': disk.used}
+    except (OSError, ValueError, KeyError):
+        data['resources'] = None
     try:
         data['online_ips'] = {key: sorted(value) for key, value in ip_limiter.online_ips().items()}
         counters = json.loads(ip_limiter.api('statsquery', '-pattern=user>>>'))

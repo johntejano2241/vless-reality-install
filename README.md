@@ -4,6 +4,28 @@ Install a dedicated Xray server and manage expiry and per-client public-IP slots
 Supports Ubuntu 22.04 with systemd on x86_64 and ARM64. It can run beside OpenVPN
 using a separate service and an available TCP port.
 
+## Administrator dashboard
+
+Fresh installs and upgrades now include an **admin-only Laravel/Filament dashboard**.
+It provides staff roles with mandatory MFA, VPN users, manual customer records,
+access plans, early extensions, suspension, credential rotation, private servers,
+health/usage views, support records, operation tracking, audit history and encrypted backups.
+Customer sign-in and payment services are excluded.
+
+After the dashboard becomes healthy, installation prints a random **eight-character
+setup key** for first-owner creation at `/setup`. It expires after 30 minutes and
+works only while first setup is unclaimed. Existing administrator credentials
+are preserved on reinstall/upgrade; completed setup stays closed.
+
+The web listener defaults to **127.0.0.1:8080**. Open an SSH tunnel from your computer
+and use the printed setup URL. See the complete [dashboard installation, first-admin setup,
+HTTPS, roles, private server connections and recovery guide](docs/ADMIN_DASHBOARD.md).
+The installer deploys the web app with Docker Compose and keeps host management
+behind a private Unix socket. It does not expose a root shell to the web process.
+
+For an explicitly CLI-only installation, set `INSTALL_ADMIN_DASHBOARD=0` when
+running `install.sh` or `upgrade.sh`.
+
 Choose the guide for your server:
 
 | Your situation | Guide | Script |
@@ -346,6 +368,13 @@ sudo realityctl set-limit phone --ips 0
 # Renew an expired client for 7 days, or permanently
 sudo realityctl renew laptop --days 7
 sudo realityctl renew phone --days 0
+
+# Extend active/expired access without changing its link; suspension stays in effect
+sudo realityctl extend laptop --days 30
+sudo realityctl suspend laptop
+sudo realityctl resume laptop
+# Rotate a compromised credential; the old link stops working
+sudo realityctl rotate laptop
 
 # Find one client or list every retained record
 sudo realityctl find phone

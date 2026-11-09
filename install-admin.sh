@@ -84,7 +84,7 @@ systemctl enable --now reality-vless-admin-backup.timer
 systemctl start reality-vless-admin-backup
 ready=false
 web_host=$(python3 -c 'from pathlib import Path; from urllib.parse import urlsplit; values=dict(line.split("=",1) for line in Path("/etc/reality-vless-admin/app.env").read_text().splitlines() if "=" in line); print(urlsplit(values["APP_URL"]).netloc)')
-for attempt in {1..15}; do
+for _attempt in {1..15}; do
   if curl -fsS --max-time 5 -H "Host: $web_host" "http://127.0.0.1:$port/up" >/dev/null; then ready=true; break; fi
   sleep 2
 done

@@ -15,6 +15,11 @@ for installed_file in /etc/reality-vless/config.json /etc/reality-vless/server.j
   [[ -f $installed_file ]] || { echo "Existing installation missing: $installed_file" >&2; exit 1; }
 done
 /usr/bin/python3 "$base/realityctl.py" check-core /usr/local/bin/xray-reality
+if [[ ${INSTALL_ADMIN_DASHBOARD:-1} == 1 ]]; then
+  for source_file in install-admin.sh admin_agent.py dashboard/composer.lock dashboard/deploy/compose.yaml; do
+    [[ -f "$base/$source_file" ]] || { echo "Missing dashboard source: $source_file" >&2; exit 1; }
+  done
+fi
 exec 9>>/run/lock/reality-installer.lock
 flock -n 9 || { echo 'Another installation or upgrade is running.' >&2; exit 1; }
 # Validate source without creating pycache beside the checked-out project.
