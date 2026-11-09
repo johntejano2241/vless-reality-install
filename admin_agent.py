@@ -145,6 +145,44 @@ def backup():
     return {'file': target.name, 'created_at': manager.timestamp(manager.utcnow())}
 
 
+def verify_backup(path):
+    """Authenticate and restore into an isolated temporary directory, never production."""
+    from cryptography.fernet import Fernet
+    from cryptography.fernet import InvalidToken
+    path = Path(path)
+    if path.resolve().parent != BACKUPS.resolve() or not path.is_file() or path.stat().st_size > 268435456:
+        raise ValueError('Choose a bounded encrypted backup from the managed backup directory')
+    try:
+        raw = Fernet(BACKUP_KEY.read_bytes()).decrypt(path.read_bytes())
+    except InvalidToken as error:
+        raise ValueError('Backup authentication failed') from error
+    allowed = {'config.json', 'clients.json', 'server.json', 'dashboard.sqlite', 'web-app.env'}
+    with tarfile.open(fileobj=io.BytesIO(raw), mode='r:gz') as archive, tempfile.TemporaryDirectory() as temporary:
+        members = archive.getmembers()
+        names = [item.name for item in members]
+        if len(set(names)) != len(names) or set(names) - allowed or sum(item.size for item in members) > 134217728:
+            raise ValueError('Invalid backup members or size')
+        if not {'config.json', 'clients.json', 'server.json'}.issubset(names):
+            raise ValueError('Incomplete VPN backup')
+        for member in members:
+            if not member.isfile():
+                raise ValueError('Backup links and directories are not accepted')
+            content = archive.extractfile(member).read()
+            target = Path(temporary) / member.name
+            target.write_bytes(content)
+            os.chmod(target, 0o600)
+        registry = manager.validate_registry(json.loads((Path(temporary) / 'clients.json').read_text()))
+        config = json.loads((Path(temporary) / 'config.json').read_text())
+        manager.users(config)
+        json.loads((Path(temporary) / 'server.json').read_text())
+        database = Path(temporary) / 'dashboard.sqlite'
+        if database.exists():
+            with contextlib.closing(sqlite3.connect('file:' + str(database) + '?mode=ro', uri=True)) as connection:
+                if connection.execute('PRAGMA quick_check').fetchone()[0] != 'ok':
+                    raise ValueError('Invalid dashboard database')
+        return {'verified': True, 'clients': len(registry['clients']), 'files': names}
+
+
 class Handler(BaseHTTPRequestHandler):
     def log_message(self, *_args):
         pass
@@ -194,10 +232,16 @@ def main():
         raise ValueError('Run as root')
     os.umask(0o077)
     parser = argparse.ArgumentParser()
-    parser.add_argument('command', choices=['serve', 'backup'])
+    parser.add_argument('command', choices=['serve', 'backup', 'verify-backup'])
+    parser.add_argument('file', nargs='?')
     args = parser.parse_args()
     if args.command == 'backup':
         print(json.dumps(backup()))
+        return
+    if args.command == 'verify-backup':
+        if not args.file:
+            raise ValueError('Pass an encrypted backup filename')
+        print(json.dumps(verify_backup(args.file)))
         return
     SOCKET.unlink(missing_ok=True)
     with socketserver.UnixStreamServer(str(SOCKET), Handler) as server:

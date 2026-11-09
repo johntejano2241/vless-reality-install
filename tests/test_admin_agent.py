@@ -5,6 +5,7 @@ import os
 from pathlib import Path
 import subprocess
 import tempfile
+import sqlite3
 from types import SimpleNamespace
 import unittest
 from unittest.mock import patch
@@ -112,6 +113,25 @@ class AdminAgentTests(unittest.TestCase):
         registry=json.loads(m.REGISTRY.read_text())
         self.assertEqual(registry['clients'],[])
         self.assertNotIn(payload['operation_id'],registry.get('admin_operations',{}))
+
+    def test_encrypted_backup_restores_into_isolated_validation_directory(self):
+        agent.mutate(self.operation())
+        data=self.root/'web'; (data/'database').mkdir(parents=True)
+        connection=sqlite3.connect(data/'database'/'database.sqlite')
+        connection.execute('CREATE TABLE example (name TEXT)')
+        connection.execute("INSERT INTO example VALUES ('retained admin data')")
+        connection.commit(); connection.close()
+        env=self.root/'app.env'; env.write_text('APP_KEY=synthetic-app-key')
+        with patch.multiple(agent,BACKUPS=self.root/'backups',BACKUP_KEY=self.root/'backup.key',WEB_DATA=data,WEB_ENV=env):
+            result=agent.backup(); path=agent.BACKUPS/result['file']
+            self.assertNotIn(b'synthetic-private-key',path.read_bytes())
+            self.assertNotIn(b'synthetic-app-key',path.read_bytes())
+            self.assertEqual(path.stat().st_mode & 0o777,0o600)
+            checked=agent.verify_backup(path)
+            self.assertTrue(checked['verified']); self.assertEqual(checked['clients'],1)
+            self.assertIn('dashboard.sqlite',checked['files'])
+            raw=bytearray(path.read_bytes()); raw[-20]^=1; path.write_bytes(raw)
+            with self.assertRaisesRegex(ValueError,'authentication failed'): agent.verify_backup(path)
 
 
 if __name__=='__main__': unittest.main()

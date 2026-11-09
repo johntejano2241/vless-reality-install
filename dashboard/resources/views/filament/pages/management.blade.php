@@ -10,7 +10,7 @@
                 </div>
                 @foreach($nodes as $node)
                     @if($node->id===$nodeId)
-                        <p class="mt-3 text-sm">Last sample: {{ $node->observed_at?->timezone('Asia/Manila')->format('Y-m-d H:i:s').' PHT' ?? 'Never collected' }}</p>
+                        <p class="mt-3 text-sm">Last sample: {{ $node->observed_at ? $node->observed_at->timezone('Asia/Manila')->format('Y-m-d H:i:s').' PHT' : 'Never collected' }}</p>
                         @if($node->error || !$node->observed_at || $node->observed_at->lt(now()->subMinutes(3)))<p class="mt-2 text-amber-600" role="alert">Server data is stale or unavailable. {{ $node->error }}</p>@endif
                         @if($node->health['statistics_error']??false)<p class="text-amber-600">Online IPs and traffic statistics are unavailable.</p>@endif
                     @endif
@@ -34,7 +34,7 @@
             </tr></thead><tbody>
             @forelse($records as $record)<tr class="border-b" wire:key="{{ $this->section() }}-{{ $record->id }}">
                 @if($this->section()==='clients')
-                    <td class="p-3 font-medium">{{ $record->name }}</td><td>{{ ucfirst($record->status) }}</td><td>{{ $record->expires_at?->timezone('Asia/Manila')->format('Y-m-d H:i').' PHT' ?? 'No expiry' }}</td><td>{{ $record->ip_limit ?: 'Unlimited' }}</td><td>{{ $record->online_ips===null ? 'Unknown' : implode(', ',$record->online_ips) ?: 'None' }}</td><td>{{ number_format(($record->upload_bytes+$record->download_bytes)/1073741824,2) }} GiB</td><td><x-filament::button size="sm" wire:click="selectClient({{ $record->id }})">Select</x-filament::button></td>
+                    <td class="p-3 font-medium">{{ $record->name }}</td><td>{{ ucfirst($record->status) }}</td><td>{{ $record->expires_at?->timezone('Asia/Manila')->format('Y-m-d H:i').' PHT' ?? 'No expiry' }}</td><td>{{ $record->ip_limit ?: 'Unlimited' }}</td><td>{{ $record->online_ips===null ? 'Unknown' : (implode(', ',$record->online_ips) ?: 'None') }}</td><td>{{ number_format(($record->upload_bytes+$record->download_bytes)/1073741824,2) }} GiB</td><td><x-filament::button size="sm" wire:click="selectClient({{ $record->id }})">Select</x-filament::button></td>
                 @elseif($this->section()==='audit')<td class="p-3">{{ $record->created_at }}</td><td>{{ $record->actor_id ?? 'System' }}</td><td>{{ $record->action }}</td><td>{{ $record->target }}</td>
                 @elseif($this->section()==='operations')<td class="p-3">{{ $record->created_at }}</td><td>{{ $record->client_name }}</td><td>{{ $record->action }}</td><td>{{ $record->state }}</td><td>{{ $record->error }}</td>
                 @elseif($this->section()==='nodes')<td class="p-3">{{ $record->name }}</td><td>{{ $record->region }}</td><td>{{ $record->socket_name }}.sock</td><td>{{ $record->error ?? json_encode($record->health['services']??['status'=>'Unknown']) }}</td><td><x-filament::button size="sm" wire:click="editRecord({{ $record->id }})">Edit</x-filament::button></td>

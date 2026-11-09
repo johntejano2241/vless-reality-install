@@ -451,14 +451,14 @@ def execute(command, name=None, days=None, devices=0):
                          find_client(registry, name).get('device_limit', 0) != parse_devices(devices))
         if command in ['add', 'set-limit'] and parse_devices(devices):
             require_ip_control(config)
-        if command in ['add', 'renew', 'remove', 'set-limit']:
+        if command in ['add', 'renew', 'extend', 'remove', 'set-limit', 'suspend', 'resume', 'rotate']:
             registry = edit_clients(registry, command, name, days, now, devices)
         # Reads and the timer also enforce due expirations; expired records stay in clients.json.
         active_config = render_config(config, registry, now)
         # Positive limits have identical fail-closed disk rules. Restart on a
         # changed cap too, so old in-memory allowances cannot outlive a reduction.
-        restarted = commit(active_config, registry, force_restart=limit_changed)
-        if command in ['add', 'renew']:
+        restarted = commit(active_config, registry, force_restart=limit_changed or command=='rotate')
+        if command in ['add', 'renew', 'extend', 'rotate']:
             record = find_client(registry, name)
             print_table([record], now)
             print(share_link(active_config, json.loads((ROOT / 'server.json').read_text()), record))
@@ -475,6 +475,8 @@ def execute(command, name=None, days=None, devices=0):
         elif command == 'set-limit':
             print_table([find_client(registry, name)], now)
             print('Public-IP limit saved. Existing connection link and expiration retained.')
+        elif command in ['suspend','resume']:
+            print_table([find_client(registry,name)], now)
         if restarted:
             print('Access list updated; service restarted. Other clients may briefly reconnect.')
 
@@ -523,7 +525,7 @@ def menu():
 def main(argv=None):
     parser = argparse.ArgumentParser(description='Manage VLESS + REALITY clients and expiry (root required)')
     sub = parser.add_subparsers(dest='command')
-    for action in ['add', 'renew']:
+    for action in ['add', 'renew', 'extend']:
         child = sub.add_parser(action)
         child.add_argument('name')
         child.add_argument('--days', help='0 = no expiry, 1 or more = days; prompted if omitted')
@@ -534,6 +536,8 @@ def main(argv=None):
     child.add_argument('name')
     child.add_argument('--ips', required=True, help='0 = unlimited, 1 or more = simultaneous public-IP slots')
     sub.add_parser('limits', help='Show an account public-IP cap, online IPs and saved slots').add_argument('name')
+    for action in ['suspend','resume','rotate']:
+        sub.add_parser(action).add_argument('name')
     sub.add_parser('remove', aliases=['revoke']).add_argument('name')
     sub.add_parser('find', aliases=['show']).add_argument('name')
     sub.add_parser('list', aliases=['all'])
@@ -582,7 +586,7 @@ def main(argv=None):
     if name is not None:
         client_name(name)
     days = None
-    if command in ['add', 'renew']:
+    if command in ['add', 'renew', 'extend']:
         if args.days is not None:
             days = parse_days(args.days)
         elif sys.stdin.isatty():
