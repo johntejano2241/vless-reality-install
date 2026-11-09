@@ -1,0 +1,44 @@
+name: reality-vless-admin
+x-app: &app
+  image: esmi-vpn-admin:local
+  build:
+    context: /opt/reality-vless-admin
+    dockerfile: deploy/Dockerfile
+    target: app
+  user: "${ADMIN_UID:?}:${ADMIN_GID:?}"
+  env_file: /etc/reality-vless-admin/app.env
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs: [/tmp]
+  volumes:
+    - /var/lib/reality-vless-admin/storage:/app/storage
+    - /var/lib/reality-vless-admin/database:/var/lib/esmi/database
+    - /run/reality-vless-admin:/run/reality-vless-admin:ro
+  restart: unless-stopped
+  networks: [admin]
+services:
+  app: *app
+  worker:
+    <<: *app
+    command: [php, artisan, queue:work, --sleep=2, --timeout=110, --tries=3]
+  scheduler:
+    <<: *app
+    command: [php, artisan, schedule:work]
+  web:
+    image: esmi-vpn-admin-web:local
+    build:
+      context: /opt/reality-vless-admin
+      dockerfile: deploy/Dockerfile
+      target: web
+    ports: ["127.0.0.1:${ADMIN_PORT:-8080}:8080"]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs: [/tmp]
+    restart: unless-stopped
+    depends_on: [app]
+    networks: [admin]
+networks:
+  admin:
+    internal: true

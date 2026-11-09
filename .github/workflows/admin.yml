@@ -1,0 +1,36 @@
+name: Admin dashboard
+on: [push, pull_request, workflow_dispatch]
+permissions:
+  contents: read
+jobs:
+  admin:
+    runs-on: ubuntu-22.04
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.4'
+          extensions: intl, mbstring, pdo_sqlite, bcmath, zip, pcntl
+          tools: composer:v2
+          coverage: none
+      - name: Install application dependencies
+        run: composer install --no-interaction --prefer-dist
+      - name: Test first-admin setup and administrator permissions
+        run: vendor/bin/phpunit
+      - name: Compile administrator views and assets
+        env:
+          APP_KEY: base64:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+        run: |
+          php artisan view:cache
+          php artisan filament:assets
+          php artisan route:list --except-vendor
+          composer audit
+      - uses: actions/upload-artifact@v4
+        with:
+          name: admin-composer-lock
+          path: dashboard/composer.lock
+      - name: Validate container deployment
+        run: docker build --target web -f deploy/Dockerfile -t esmi-admin-ci .

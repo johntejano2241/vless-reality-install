@@ -1,0 +1,6 @@
+vendor
+.env
+.phpunit.cache
+tests
+storage/logs/*
+database/*.sqlite*

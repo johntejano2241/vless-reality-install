@@ -1,0 +1,10 @@
+/vendor/
+/.env
+/.phpunit.cache/
+/bootstrap/cache/*.php
+/database/*.sqlite*
+/storage/**
+!/storage/.gitkeep
+/public/css/filament/
+/public/js/filament/
+/public/fonts/filament/

@@ -1,0 +1,8 @@
+[Unit]
+Description=Daily encrypted Esmi VPN backup
+[Timer]
+OnCalendar=daily
+Persistent=true
+RandomizedDelaySec=300
+[Install]
+WantedBy=timers.target

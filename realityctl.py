@@ -131,7 +131,7 @@ def parse_days(value):
 
 def parse_devices(value):
     if not re.fullmatch(r'[0-9]+', str(value).strip()):
-        raise ValueError('Device limit must be a whole number: 0 = no limit, 1 or more = public-IP slots')
+        raise ValueError('Public-IP limit must be a whole number: 0 = no limit, 1 or more = IP slots')
     return int(str(value).strip())
 
 
@@ -152,6 +152,8 @@ def expiry_from_days(days, now):
 
 
 def client_status(record, now):
+    if record.get('suspended', False):
+        return 'suspended'
     expiry = record['expires_at']
     return 'expired' if expiry is not None and parse_timestamp(expiry) <= now else 'active'
 
@@ -184,6 +186,8 @@ def validate_registry(registry):
         limit = record.get('device_limit', 0)
         if type(limit) is not int or limit < 0:
             raise ValueError('Invalid non-negative device_limit in clients.json')
+        if type(record.get('suspended', False)) is not bool:
+            raise ValueError('Invalid suspended flag in clients.json')
     return registry
 
 
@@ -234,6 +238,16 @@ def edit_clients(registry, action, name, days, now, devices=0):
         record['expires_at'] = expiry_from_days(days, now)
     elif action == 'remove':
         updated['clients'].remove(find_client(updated, name))
+    elif action == 'set-limit':
+        find_client(updated, name)['device_limit'] = parse_devices(devices)
+    elif action == 'extend':
+        record = find_client(updated, name)
+        start = max(now, parse_timestamp(record['expires_at'])) if record['expires_at'] else now
+        record['expires_at'] = expiry_from_days(days, start)
+    elif action in ['suspend', 'resume']:
+        find_client(updated, name)['suspended'] = action == 'suspend'
+    elif action == 'rotate':
+        find_client(updated, name)['user']['id'] = str(uuid.uuid4())
     else:
         raise ValueError('Unknown client action')
     return validate_registry(updated)
@@ -251,6 +265,8 @@ def enable_ip_control(config, registry):
     levels = rendered.setdefault('policy', {}).setdefault('levels', {})
     for level in {str(c['user'].get('level', 0)) for c in registry['clients']} | {'0'}:
         levels.setdefault(level, {})['statsUserOnline'] = True
+        levels[level]['statsUserUplink'] = True
+        levels[level]['statsUserDownlink'] = True
     return rendered
 
 
@@ -315,7 +331,7 @@ def restart_service():
     subprocess.run(['systemctl', 'is-active', '--quiet', SERVICE], check=True, timeout=10)
 
 
-def commit(config, registry=None, restart=True):
+def commit(config, registry=None, restart=True, force_restart=False):
     """Validate first; publish registry before runtime config so the timer can recover a crash.
 
     All callers hold LOCK. An ordinary validation/restart failure restores both
@@ -325,7 +341,7 @@ def commit(config, registry=None, restart=True):
     candidate = ROOT / 'candidate.json'
     old_config = json.loads(CONFIG.read_text()) if CONFIG.exists() else None
     old_registry = json.loads(REGISTRY.read_text()) if REGISTRY.exists() else None
-    changed_config = config != old_config
+    changed_config = config != old_config or force_restart
     changed_registry = registry is not None and registry != old_registry
     if not changed_config and not changed_registry:
         return False
@@ -388,6 +404,34 @@ def print_table(records, now):
         print(fmt.format(*row))
     if not rows:
         print('(no clients)')
+    print('IP slots count public IPs. Phones on the same Wi-Fi/hotspot can share one slot.')
+
+
+def require_ip_control(config):
+    if config.get('api', {}).get('tag') != 'reality-control':
+        raise ValueError('Run upgrade.sh to enable the public-IP limit service')
+    try:
+        subprocess.run(['systemctl', 'is-active', '--quiet', IP_SERVICE], check=True, timeout=10)
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ValueError('IP-limit service is unavailable; run upgrade.sh or start reality-vless-limits') from exc
+
+
+def print_ip_limits(config, record, now):
+    # Import lazily: the controller itself imports this module for account handling.
+    import ip_limiter
+    print_table([record], now)
+    require_ip_control(config)
+    try:
+        online = ip_limiter.online_ips().get(record['name'].casefold(), set())
+        saved = ip_limiter.read_state()['clients'].get(record['user']['id'], {})
+    except (ValueError, OSError, subprocess.SubprocessError) as exc:
+        raise ValueError('Cannot read IP-limit diagnostics; check journalctl -u reality-vless-limits') from exc
+    print('Public IPs reported by Xray: ' + (', '.join(sorted(online)) or '(none)'))
+    print('Saved admitted IP slots: ' + (', '.join(sorted(saved)) or '(none)'))
+    print('Online statistics can briefly include denied attempts; saved slots may await reconciliation.')
+    if not record.get('device_limit', 0):
+        print(f"This account is unlimited. Set a cap with: sudo realityctl set-limit {record['name']} --ips 1")
+    print('Happ can show Connected while traffic is blocked. Test browsing through the VPN on each phone.')
 
 
 def execute(command, name=None, days=None, devices=0):
@@ -400,18 +444,20 @@ def execute(command, name=None, days=None, devices=0):
             return
         if command == 'configure-limits':
             config = enable_ip_control(config, registry)
-        if command == 'add' and parse_devices(devices):
-            if config.get('api', {}).get('tag') != 'reality-control':
-                raise ValueError('Run upgrade.sh to enable the IP-limit service before adding a limited client')
-            try:
-                subprocess.run(['systemctl', 'is-active', '--quiet', IP_SERVICE], check=True, timeout=10)
-            except (OSError, subprocess.SubprocessError) as exc:
-                raise ValueError('IP-limit service is unavailable; run upgrade.sh or start reality-vless-limits') from exc
-        if command in ['add', 'renew', 'remove']:
+        if command == 'limits':
+            print_ip_limits(config, find_client(registry, name), now)
+            return
+        limit_changed = (command == 'set-limit' and
+                         find_client(registry, name).get('device_limit', 0) != parse_devices(devices))
+        if command in ['add', 'set-limit'] and parse_devices(devices):
+            require_ip_control(config)
+        if command in ['add', 'renew', 'remove', 'set-limit']:
             registry = edit_clients(registry, command, name, days, now, devices)
         # Reads and the timer also enforce due expirations; expired records stay in clients.json.
         active_config = render_config(config, registry, now)
-        restarted = commit(active_config, registry)
+        # Positive limits have identical fail-closed disk rules. Restart on a
+        # changed cap too, so old in-memory allowances cannot outlive a reduction.
+        restarted = commit(active_config, registry, force_restart=limit_changed)
         if command in ['add', 'renew']:
             record = find_client(registry, name)
             print_table([record], now)
@@ -426,6 +472,9 @@ def execute(command, name=None, days=None, devices=0):
             print(share_link(active_config, json.loads((ROOT / 'server.json').read_text()), record))
         elif command == 'list':
             print_table(sorted(registry['clients'], key=lambda c: c['name'].casefold()), now)
+        elif command == 'set-limit':
+            print_table([find_client(registry, name)], now)
+            print('Public-IP limit saved. Existing connection link and expiration retained.')
         if restarted:
             print('Access list updated; service restarted. Other clients may briefly reconnect.')
 
@@ -435,28 +484,31 @@ def prompt_days():
 
 
 def prompt_devices():
-    return parse_devices(input('Multiple devices / public-IP slots (0 = no limit, 1 or more = limit): ').strip())
+    print('Phones sharing Wi-Fi/hotspot or carrier NAT can use the same public-IP slot.')
+    return parse_devices(input('Public-IP slots (0 = no limit, 1 or more = limit): ').strip())
 
 
 def menu():
     # Never hold the management lock while waiting for input: the timer must keep running.
-    options = {'1': 'add', '2': 'renew', '3': 'find', '4': 'list', '5': 'remove'}
+    options = {'1': 'add', '2': 'renew', '3': 'find', '4': 'list', '5': 'remove',
+               '6': 'set-limit', '7': 'limits'}
     while True:
         print('\nVLESS + REALITY client manager\n1. Add client\n2. Renew expired client'
-              '\n3. Find client\n4. Show all clients\n5. Remove client\n0. Exit')
+              '\n3. Find client\n4. Show all clients\n5. Remove client'
+              '\n6. Set public-IP limit\n7. Check public-IP slots\n0. Exit')
         try:
             choice = input('Choose an option: ').strip()
             if choice == '0':
                 return
             if choice not in options:
-                print('Error: choose a menu option from 0 to 5.')
+                print('Error: choose a menu option from 0 to 7.')
                 continue
             command = options[choice]
             name = input('Client name: ').strip() if command != 'list' else None
             if name is not None:
                 client_name(name)
             days = prompt_days() if command in ['add', 'renew'] else None
-            devices = prompt_devices() if command == 'add' else 0
+            devices = prompt_devices() if command in ['add', 'set-limit'] else 0
             if command == 'remove' and input(f"Permanently remove '{name}'? [y/N]: ").strip().lower() != 'y':
                 print('Removal cancelled.')
                 continue
@@ -476,7 +528,12 @@ def main(argv=None):
         child.add_argument('name')
         child.add_argument('--days', help='0 = no expiry, 1 or more = days; prompted if omitted')
         if action == 'add':
-            child.add_argument('--devices', help='0 = unlimited, 1 or more = simultaneous public-IP slots')
+            child.add_argument('--ip-limit', '--devices', dest='devices',
+                               help='0 = unlimited, 1 or more = simultaneous public-IP slots; shared-IP phones share a slot')
+    child = sub.add_parser('set-limit', help='Change an existing account public-IP cap, preserving its link and expiry')
+    child.add_argument('name')
+    child.add_argument('--ips', required=True, help='0 = unlimited, 1 or more = simultaneous public-IP slots')
+    sub.add_parser('limits', help='Show an account public-IP cap, online IPs and saved slots').add_argument('name')
     sub.add_parser('remove', aliases=['revoke']).add_argument('name')
     sub.add_parser('find', aliases=['show']).add_argument('name')
     sub.add_parser('list', aliases=['all'])
@@ -533,6 +590,8 @@ def main(argv=None):
         else:
             raise ValueError('Supply --days 0 for no expiry or --days N for a number of days')
     devices = 0
+    if command == 'set-limit':
+        devices = parse_devices(args.ips)
     if command == 'add':
         if args.devices is not None:
             devices = parse_devices(args.devices)
@@ -550,4 +609,5 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print('\nExiting.', file=sys.stderr)
         sys.exit(130)
+
 

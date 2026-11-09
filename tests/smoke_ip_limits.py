@@ -95,8 +95,17 @@ def main():
             threading.Thread(target=httpd.serve_forever, daemon=True).start()
             direct = command('curl', '--silent', '--show-error', '--insecure', '--noproxy', '*', '--max-time', '3', f'https://{TARGET_IP}:18080/')
             assert MARKER.decode() in direct.stdout, 'The local HTTP fixture is unavailable'
-            command('realityctl', 'add', 'slot-limited', '--days', '0', '--devices', '1')
+            # Exercise the migrated-account case: an existing unlimited identity
+            # can receive a cap without issuing a replacement link or UUID.
+            command('realityctl', 'add', 'slot-limited', '--days', '0', '--devices', '0')
             command('realityctl', 'add', 'slot-unlimited', '--days', '0', '--devices', '0')
+            registry_path = Path('/etc/reality-vless/clients.json')
+            original = next(c for c in json.loads(registry_path.read_text())['clients']
+                            if c['name'] == 'slot-limited')
+            command('realityctl', 'set-limit', 'slot-limited', '--ips', '1')
+            updated = next(c for c in json.loads(registry_path.read_text())['clients']
+                           if c['name'] == 'slot-limited')
+            assert updated == dict(original, device_limit=1), 'Setting a cap changed account identity or expiry'
             config = json.loads(Path('/etc/reality-vless/config.json').read_text())
             config['log']['loglevel'] = 'info'
             # Xray's default freedom policy blocks reserved destinations even
@@ -142,6 +151,10 @@ def main():
             wait_for(lambda: MARKER in (root / 'hold-output').read_bytes(), 15, 'Could not establish the persistent first-IP stream')
             # A second process behind the SAME source address still uses one IP slot.
             assert fetch(19084), 'Two devices using one source IP should share a slot'
+            diagnostics = command('realityctl', 'limits', 'slot-limited').stdout
+            assert SOURCE1 in diagnostics, 'Diagnostics omitted the admitted public IP'
+            assert 'same Wi-Fi/hotspot' in diagnostics, 'Diagnostics did not explain shared-IP phones'
+            assert users['slot-limited'] not in diagnostics, 'Diagnostics exposed an account credential'
             for _ in range(3):
                 assert not fetch(19082), 'A second distinct IP bypassed the one-slot limit'
                 assert hold.poll() is None, 'Limit enforcement interrupted the admitted stream'
@@ -154,8 +167,18 @@ def main():
             hold.wait(timeout=5)
             wait_for(lambda: fetch(19082), 55, 'The disconnected IP slot was not released')
             assert fetch(19083), 'The unlimited account stopped working after slot replacement'
+            command('realityctl', 'set-limit', 'slot-limited', '--ips', '2')
+            wait_for(lambda: fetch(19081) and fetch(19082), 25, 'Increasing the cap did not admit both public IPs')
+            command('realityctl', 'set-limit', 'slot-limited', '--ips', '1')
+
+            def only_one_ip_can_browse():
+                first, second = fetch(19081), fetch(19082)
+                assert not (first and second), 'Reducing the cap left both IPs allowed'
+                return first != second
+
+            wait_for(only_one_ip_can_browse, 20, 'The reduced one-slot cap was not enforced')
             print('Real REALITY clients: first-IP admission, same-IP sharing, excess-IP denial,')
-            print('per-account isolation, uninterrupted streams and idle-slot reuse passed.')
+            print('per-account isolation, uninterrupted streams, idle-slot reuse and cap edits passed.')
         except Exception:
             print('Target requests:', HITS, 'Last curl:', LAST_CURL, flush=True)
             for log_path in sorted(root.glob('client-*.log')):
@@ -195,3 +218,4 @@ def main():
 
 if __name__ == '__main__':
     main()
+
